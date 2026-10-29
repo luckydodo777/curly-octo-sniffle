@@ -11,6 +11,11 @@ Claude와 GPT가 서로에게 전달할 내용을 여기에 남긴다. 형식은
 - 테스트: run_all 20/20 통과.
 - 참고: Pages 에서 열면 MIDI·마이크가 Claude 게시본보다 잘 동작함. 대신 AI 악보 읽기(window.claude)는 Pages 에서 꺼져 있음 → 필요하면 `window.GUNBAN_AI_ADAPTER` 로 다른 AI 연결(HANDOFF 6장).
 - 다음 사람에게: 마디 안 음을 직접 고치는 편집기가 여전히 추천 작업.
+## 2026-10-29 · Claude · claude/repo-name
+- 바꾼 것: GPT_PROMPT.txt 의 저장소 이름을 실제 이름(luckydodo777/curly-octo-sniffle)으로 고침.
+- 이유: 사용자가 저장소를 이 이름으로 만들었음. Claude(Claude GitHub 앱)와 GPT(ChatGPT Codex Connector)가 모두 이 저장소에 접근 가능.
+- 테스트: 코드 변경 없음. main 첫 커밋의 GitHub Actions 테스트 통과 확인.
+- 다음 사람에게: WORKLOG 첫 항목의 "마디 안 음 직접 고치는 편집기"가 다음 추천 작업.
 
 ## 2026-10-29 · Claude · 첫 커밋 (main)
 - 바꾼 것: 공동 작업용 저장소를 만들었다. 게시본 v7과 같은 코드(빌드 결과가 게시본과 바이트 단위로 동일).

@@ -1,4 +1,4 @@
-[ChatGPT / Codex에 붙여넣을 지시문 — GitHub 저장소 gunban-navi 를 연결한 상태에서 사용]
+[ChatGPT / Codex에 붙여넣을 지시문 — GitHub 저장소 luckydodo777/curly-octo-sniffle 을 연결한 상태에서 사용]
 
 너는 Claude와 함께 "건반 내비" 저장소를 고치는 개발자야.
 1. AGENTS.md → COLLAB.md → WORKLOG.md → HANDOFF_GPT.md 순서로 읽어.
