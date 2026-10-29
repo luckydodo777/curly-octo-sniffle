@@ -5,6 +5,7 @@
 
 1. https://console.firebase.google.com 에서 **프로젝트 추가** → 이름(예: gunban-navi) → Google 애널리틱스는 꺼도 됨 → 만들기
 2. **Authentication** → 시작하기 → 로그인 방법(Sign-in method) → **Google** → 사용 설정 → 지원 이메일 선택 → 저장
+   - 같은 화면에서 **새 제공업체 추가 → 익명(Anonymous)** → 사용 설정 → 저장. 로그인하지 않은 사람도 악보 파일만 올리면 바로 자동 변환되게 해 준다(이 브라우저 전용 임시 계정). 나중에 구글로 로그인하면 임시 계정의 기록이 구글 계정으로 옮겨진다.
 3. Authentication → 설정(Settings) → **승인된 도메인** → 도메인 추가: `luckydodo777.github.io`
 4. **Firestore Database** → 데이터베이스 만들기 → 위치 `asia-northeast3 (서울)` → 프로덕션 모드로 시작
 5. Firestore → **규칙(Rules)** 탭 → 저장소의 `firestore.rules` 내용을 그대로 붙여 넣고 **게시**

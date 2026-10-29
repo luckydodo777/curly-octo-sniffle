@@ -49,4 +49,4 @@ jobs:
           sudo apt-get install -y -q xvfb >/dev/null
       - name: 변환
         if: steps.q.outputs.has == 'yes'
-        run: python omr/worker.py --run --audiveris /tmp/audx/opt/audiveris/bin/Audiveris
+        run: python omr/worker.py --run --linger 600 --audiveris /tmp/audx/opt/audiveris/bin/Audiveris
