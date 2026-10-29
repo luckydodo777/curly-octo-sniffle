@@ -1301,7 +1301,7 @@ $("#saveXmlBtn").onclick = async () => {
    - Firebase 웹 설정값은 비밀번호가 아니다(공개돼도 됨). 데이터 보호는 firestore.rules 가 맡는다.
    - 저장 위치: users/{uid}/songs/{songId} (+ chunks/, sessions/)
    ============================================================ */
-const FIREBASE_CONFIG = { apiKey: "", authDomain: "", projectId: "", appId: "" };
+const FIREBASE_CONFIG = { apiKey: "AIzaSyCjxx7m4hoOWm2fkIeb-biPsNbzL_PkUCU", authDomain: "rmtlove777.firebaseapp.com", projectId: "rmtlove777", appId: "1:636976181085:web:d5c54d87decdda3a6902b4" };
 const FIREBASE_VERSION = "10.12.2";
 const CLOUD_CHUNK = 300000; // 문서 하나 1MB 제한 → 큰 글자 데이터는 30만 자씩 나눠 저장
 async function firebaseBackend(cfg) {

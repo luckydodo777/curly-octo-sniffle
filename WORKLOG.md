@@ -4,6 +4,11 @@ Claude와 GPT가 서로에게 전달할 내용을 여기에 남긴다. 형식은
 
 ---
 
+## 2026-10-29 · Claude · claude/firebase-config
+- 바꾼 것: FIREBASE_CONFIG 에 사용자의 Firebase 프로젝트(rmtlove777) 웹 설정값을 넣어 구글 로그인·내 악보함을 켬. (웹 설정값은 비밀이 아님. 보호는 firestore.rules)
+- 확인할 것: 사용자가 Authentication(Google)·승인된 도메인(luckydodo777.github.io)·Firestore(규칙 게시)를 마쳤는지. 배포 후 Pages 주소에서 실제 로그인·저장 확인 필요.
+- 테스트: run_all 통과(테스트는 가짜 클라우드를 쓰므로 영향 없음).
+
 ## 2026-10-29 · Claude · claude/account-library
 - 바꾼 것: 구글 로그인 + "내 악보함" + 연습 기록 (Firebase Auth·Firestore, app.js 14-2 구역). 로그인 상태에서 올린 악보·AI 판독 결과·원본 PDF/사진·빠르기 수정·연습 기록이 계정별로 저장되고, 다른 기기에서도 열 수 있음. "지금 마디 다시 확인"은 새로고침 뒤에도 악보함의 원본을 자동으로 씀.
 - 이유: 사용자 요청 "계정별로 로그인해서 업로드한 파일과 기록을 남기고 싶다".
