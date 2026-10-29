@@ -2,35 +2,45 @@ name: omr-probe
 on:
   push:
     branches: [claude/omr-probe]
+    paths-ignore: ["omr/test/probe/**"]
+permissions:
+  contents: write
 jobs:
   probe:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: Audiveris 최신 릴리스 자산 목록
-        env: { GH_TOKEN: "${{ github.token }}" }
-        run: gh release view -R Audiveris/audiveris --json tagName,assets --jq '.tagName, (.assets[].name)'
-      - name: MuseScore로 예제 PDF 만들기
-        run: |
-          sudo apt-get update -q && sudo apt-get install -y -q musescore3 xvfb >/dev/null
-          QT_QPA_PLATFORM=offscreen mscore3 -o omr/test/ode.pdf omr/test/ode.musicxml || xvfb-run -a mscore3 -o omr/test/ode.pdf omr/test/ode.musicxml
-          ls -la omr/test
-      - name: Audiveris 설치
+      - name: 진단 실행
+        continue-on-error: true
         env: { GH_TOKEN: "${{ github.token }}" }
         run: |
-          gh release download -R Audiveris/audiveris --pattern '*ubuntu24*.deb' -D /tmp/aud || gh release download -R Audiveris/audiveris --pattern '*.deb' -D /tmp/aud
-          ls -la /tmp/aud
-          sudo apt-get install -y -q /tmp/aud/*.deb >/dev/null
-          dpkg -L $(dpkg-deb -f /tmp/aud/*.deb Package) | grep -iE 'bin/|launcher' | head
-      - name: 변환
+          set -x
+          P=omr/test/probe; mkdir -p $P
+          {
+            echo "== release"; gh release view -R Audiveris/audiveris --json tagName,assets --jq '.tagName, (.assets[].name)'
+          } > $P/01_release.txt 2>&1
+          {
+            sudo apt-get update -q && sudo apt-get install -y -q musescore3 xvfb
+            QT_QPA_PLATFORM=offscreen mscore3 -o omr/test/ode.pdf omr/test/ode.musicxml || xvfb-run -a mscore3 -o omr/test/ode.pdf omr/test/ode.musicxml
+            ls -la omr/test
+          } > $P/02_pdf.txt 2>&1
+          {
+            mkdir -p /tmp/aud
+            gh release download -R Audiveris/audiveris --pattern '*buntu*24*' -D /tmp/aud || gh release download -R Audiveris/audiveris --pattern '*.deb' -D /tmp/aud
+            ls -la /tmp/aud
+            sudo apt-get install -y /tmp/aud/*.deb
+            PKG=$(dpkg-deb -f /tmp/aud/*.deb Package); echo "PKG=$PKG"
+            dpkg -L $PKG | grep -E 'bin/' | head -20
+          } > $P/03_install.txt 2>&1
+          {
+            PKG=$(dpkg-deb -f /tmp/aud/*.deb Package)
+            BIN=$(dpkg -L $PKG | grep -iE '/bin/audiveris$' | head -1); echo "BIN=$BIN"
+            time xvfb-run -a "$BIN" -batch -transcribe -export -output /tmp/out omr/test/ode.pdf
+            find /tmp/out -type f -exec ls -la {} \;
+            mkdir -p $P/out; cp /tmp/out/*.mxl $P/out/ 2>/dev/null; cp -r /tmp/out/*.log $P/out/ 2>/dev/null; true
+          } > $P/04_convert.txt 2>&1
+          cp omr/test/ode.pdf $P/ 2>/dev/null || true
+      - name: 결과를 브랜치에 기록
         run: |
-          BIN=$(dpkg -L $(dpkg-deb -f /tmp/aud/*.deb Package) | grep -E '/bin/[Aa]udiveris$' | head -1)
-          echo "BIN=$BIN"
-          xvfb-run -a "$BIN" -batch -transcribe -export -output /tmp/out omr/test/ode.pdf 2>&1 | tail -40
-          find /tmp/out -type f | head -20
-      - uses: actions/upload-artifact@v4
-        with:
-          name: probe
-          path: |
-            /tmp/out
-            omr/test/ode.pdf
+          git config user.name "github-actions"; git config user.email "actions@github.com"
+          git add omr/test/probe && git commit -m "probe 결과" && git push || echo nothing
