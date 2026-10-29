@@ -3,7 +3,7 @@ FROM ubuntu:24.04
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
       python3 curl ca-certificates xvfb xauth fontconfig fonts-dejavu-core libfreetype6 \
-      libx11-6 libxext6 libxrender1 libxtst6 libxi6 libgomp1 \
+      libx11-6 libxext6 libxrender1 libxtst6 libxi6 libgomp1 libgtk-3-0t64 \
     && rm -rf /var/lib/apt/lists/*
 ARG AUDIVERIS_VERSION=5.11.0
 RUN set -e; \
