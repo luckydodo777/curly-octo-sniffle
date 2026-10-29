@@ -4,6 +4,11 @@ Claude와 GPT가 서로에게 전달할 내용을 여기에 남긴다. 형식은
 
 ---
 
+## 2026-10-30 · Claude · claude/omr-server
+- 바꾼 것: 변환이 오래 걸리는 원인 = GitHub 예약 실행(cron) 지연(실측: 20분 넘게 한 번도 안 돎). → 전용 변환 서버(omr/server.py + Dockerfile, Hugging Face Space 무료)를 추가하고, 앱은 PDF·사진을 서버로 바로 POST 해서 결과를 즉시 엶(로그인 불필요, 목표 20~40초). 잠든 서버는 앱 시작 시 /health 로 미리 깨우고, 깨우는 동안 502/503이면 5초마다 재시도. 서버 실패 시 기존 대기열 방식으로 자동 전환. PR #8(로그인 오류 안내) 포함.
+- 사용자 할 일: docs/OMR_SERVER.md (HF 가입 → Write 토큰 → GitHub 비밀값 HF_TOKEN → hf-deploy 실행 → 아이디 알려 주기). 그 뒤 OMR_SERVER_URL 채우기.
+- 테스트: run_all 통과, omr-test 에 Docker 서버 왕복 비교 추가.
+
 ## 2026-10-30 · Claude · claude/auth-errors
 - 바꾼 것: 로그인 실패 시 Firebase 오류 코드를 쉬운 안내로 바꿔 보여 줌(authErrorText). 원인 확인: 배포본에서 Auth API가 CONFIGURATION_NOT_FOUND → Firebase 콘솔에서 Authentication '시작하기'가 아직 안 된 상태.
 - 테스트: run_all 통과.

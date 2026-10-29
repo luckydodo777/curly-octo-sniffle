@@ -202,6 +202,27 @@ async function openPage(browser, opts = {}) {
     ok('임시 계정 불가 시 로그인 안내', await p.evaluate(() => !document.querySelector('#omrChip').hidden && /로그인/.test(document.querySelector('#omrChipText').textContent) && document.querySelector('#aiModal').hidden));
     ok('페이지 오류 없음', errs.length === 0, errs.join(' | ')); await p.close(); }
 
+  // 9) 변환 서버로 바로 변환 (Hugging Face Space 흉내) — 깨우는 중(503) → 결과 받아 바로 열기, 로그인 없이도 됨
+  { const { p, errs } = await openPage(browser, { mockAI: () => { window.GUNBAN_OMR_SERVER = 'https://omr.test/'; } });
+    let posts = 0, wakes = 0, gotName = '';
+    const xml = await p.evaluate(() => jsonToMusicXML({ title: 'Title', time: [4, 4], measures: [{ rh: [{ p: 'E5', d: 'w' }], lh: [{ p: 'C3', d: 'w' }] }] }));
+    await p.route('https://omr.test/**', async (r) => {
+      const u = r.request().url(); const cors = { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'Content-Type, X-File-Name' };
+      if (r.request().method() === 'OPTIONS') return r.fulfill({ status: 204, headers: cors });
+      if (u.endsWith('/health')) { wakes++; return r.fulfill({ status: 200, headers: cors, contentType: 'application/json', body: '{"ok":true}' }); }
+      posts++; gotName = decodeURIComponent(r.request().headers()['x-file-name'] || '');
+      if (posts === 1) return r.fulfill({ status: 503, headers: cors, body: 'loading' });
+      return r.fulfill({ status: 200, headers: cors, contentType: 'application/json', body: JSON.stringify({ xml, info: { measures: 1, seconds: 12 } }) });
+    });
+    await p.evaluate(() => wakeOmrServer()); await p.waitForTimeout(200);
+    await p.setInputFiles('#fileInput', FIX('synthetic_page.png')); await p.waitForTimeout(800);
+    const w1 = await p.evaluate(() => document.querySelector('#omrChipText').textContent);
+    ok('서버 깨우는 중 표시', /깨우는 중/.test(w1) && await p.evaluate(() => document.querySelector('#aiModal').hidden), w1);
+    await p.waitForFunction(() => GunbanNavi.song.title === 'synthetic_page', null, { timeout: 15000 }).catch(() => {});
+    const r = await p.evaluate(() => ({ title: GunbanNavi.song.title, kind: current.kind, chip: document.querySelector('#omrChipText').textContent }));
+    ok('변환 서버 결과를 받아 바로 열기 (로그인 없이)', r.title === 'synthetic_page' && r.kind === 'omr' && /완료/.test(r.chip) && posts === 2 && gotName === 'synthetic_page.png' && wakes >= 1, JSON.stringify({ ...r, posts, wakes, gotName }));
+    ok('페이지 오류 없음', errs.length === 0, errs.join(' | ')); await p.close(); }
+
   await browser.close();
   console.log(failed ? `\n${failed}개 실패` : '\n모두 통과'); process.exit(failed ? 1 : 0);
 })();

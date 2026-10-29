@@ -1658,7 +1658,7 @@ async function openFile(file) {
     }
     if (ext === "mxl") { const xml = await mxlToXml(await file.arrayBuffer()); setSong(parseMusicXML(xml), { kind: "musicxml", xml, name }); toast("악보를 불러왔어요"); return; }
     if (ext === "musicxml" || ext === "xml" || file.type.includes("xml")) { const xml = await file.text(); setSong(parseMusicXML(xml), { kind: "musicxml", xml, name }); toast("악보를 불러왔어요"); return; }
-    if (ext === "pdf" || file.type === "application/pdf" || file.type.startsWith("image/") || /^(png|jpe?g|webp|gif|bmp|heic)$/.test(ext)) { if (Library.available && !window.GUNBAN_AI_ADAPTER && !(window.claude && window.claude.use)) autoConvert(file); else openAIDialog(file); return; }
+    if (ext === "pdf" || file.type === "application/pdf" || file.type.startsWith("image/") || /^(png|jpe?g|webp|gif|bmp|heic)$/.test(ext)) { const noAI = !window.GUNBAN_AI_ADAPTER && !(window.claude && window.claude.use); if (noAI && omrServer()) serverConvert(file); else if (noAI && Library.available) autoConvert(file); else openAIDialog(file); return; }
     // 확장자를 모르면 내용으로 판별
     const head = new Uint8Array(await file.slice(0, 4).arrayBuffer());
     if (head[0] === 0x4d && head[1] === 0x54) { const buf = await file.arrayBuffer(); setSong(parseMIDI(buf), { kind: "midi", name }); return; }
@@ -1682,6 +1682,9 @@ $("#saveXmlBtn").onclick = async () => {
    ============================================================ */
 const FIREBASE_CONFIG = { apiKey: "AIzaSyCjxx7m4hoOWm2fkIeb-biPsNbzL_PkUCU", authDomain: "rmtlove777.firebaseapp.com", projectId: "rmtlove777", appId: "1:636976181085:web:d5c54d87decdda3a6902b4" };
 const FIREBASE_VERSION = "10.12.2";
+// 악보 변환 서버(Audiveris, Hugging Face Space). 비어 있으면 예전 방식(대기열 + GitHub Actions)을 쓴다. docs/OMR_SERVER.md
+const OMR_SERVER_URL = "";
+const omrServer = () => (window.GUNBAN_OMR_SERVER || OMR_SERVER_URL || "").replace(/\/+$/, "");
 const CLOUD_CHUNK = 300000; // 문서 하나 1MB 제한 → 큰 글자 데이터는 30만 자씩 나눠 저장
 async function firebaseBackend(cfg) {
   const base = `https://www.gstatic.com/firebasejs/${FIREBASE_VERSION}/`;
@@ -2336,6 +2339,40 @@ const Convert = {
   },
   resume() { try { const r = JSON.parse(localStorage.getItem(STORE_KEY + ":omrJob") || "null"); if (r && r.id && Date.now() - r.started < 6 * 3600e3) { Object.assign(this, { jobId: r.id, name: r.name, started: r.started }); this.poll(); } } catch (e) {} },
 };
+// 변환 서버로 바로 보내고 결과를 받아 연다 (보통 20~40초, 잠든 서버는 처음 한 번 1분쯤 더)
+let omrBusy = false;
+function wakeOmrServer() { const u = omrServer(); if (u) fetch(u + "/health", { cache: "no-store" }).catch(() => {}); }
+async function serverConvert(file) {
+  const url = omrServer();
+  if (omrBusy) { toast("앞의 악보를 변환하는 중이에요. 끝나면 다시 올려 주세요."); return; }
+  if (file.size > 15e6) { toast("15MB보다 큰 파일은 변환할 수 없어요. 페이지를 나눠서 올려 주세요."); return; }
+  omrBusy = true; Convert.name = file.name; Convert.started = Date.now();
+  let phase = "인식하는 중"; const tick = () => Convert.chip(`'${file.name}' 악보를 ${phase}… (${Convert.elapsed()})`);
+  tick(); const timer = setInterval(tick, 1000);
+  const ctl = new AbortController(); const kill = setTimeout(() => ctl.abort(), 6 * 60e3);
+  try {
+    let res = null, data = null;
+    for (let tries = 0; ; tries++) {
+      try { res = await fetch(url + "/convert", { method: "POST", body: file, signal: ctl.signal, headers: { "Content-Type": file.type || "application/octet-stream", "X-File-Name": encodeURIComponent(file.name) } }); }
+      catch (e) { if (ctl.signal.aborted) throw new Error("시간이 너무 오래 걸려 멈췄어요"); res = null; }
+      // 잠든 서버가 깨어나는 동안에는 연결이 안 되거나 502/503이 온다 → 잠시 뒤 다시
+      const waking = !res || res.status === 502 || res.status === 503 || res.status === 504;
+      if (waking && tries < 30) { const busy = res && res.status === 503 ? await res.clone().json().then((d) => d.busy).catch(() => false) : false; phase = busy ? "변환하려고 순서를 기다리는 중" : "변환 서버를 깨우는 중(처음 한 번만 1분쯤 걸려요)"; tick(); await new Promise((r) => setTimeout(r, 5000)); continue; }
+      data = res ? await res.json().catch(() => null) : null; break;
+    }
+    if (!data || !data.xml) throw new Error((data && data.error) || `변환 서버 오류 (${res ? res.status : "연결 안 됨"})`);
+    phase = "여는 중";
+    const raw = parseMusicXML(data.xml); if (!raw.title || /^(title|untitled)$/i.test(raw.title.trim())) raw.title = file.name.replace(/\.[^.]+$/, "");
+    setSong(raw, { kind: "omr", xml: data.xml, name: file.name, file });
+    clearInterval(timer);
+    Convert.chip(`'${file.name}' 변환 완료! (${Convert.elapsed()})`, "ok"); setTimeout(() => Convert.chip(""), 5000);
+    toast("자동 변환은 빠르기표를 읽지 못해요. 빠르기가 다르면 설정 → 빠르기에서 악보의 ♩= 숫자로 고쳐 주세요.");
+  } catch (e) {
+    clearInterval(timer);
+    if (Library.available && !ctl.signal.aborted && !(e && /MB|악보를 찾지/.test(e.message || ""))) { toast("변환 서버가 응답하지 않아 예비 방식(몇 분 걸림)으로 변환할게요."); omrBusy = false; clearTimeout(kill); autoConvert(file); return; }
+    Convert.chip(`'${file.name}' 변환 실패: ${(e && e.message) || "알 수 없는 오류"} (더 선명한 PDF로 다시 올려 보세요)`, "bad");
+  } finally { omrBusy = false; clearTimeout(kill); }
+}
 async function autoConvert(file) {
   if (file.size > 6e6) { toast("6MB보다 큰 파일은 변환할 수 없어요. 페이지를 나눠서 올려 주세요."); return; }
   Convert.name = file.name; Convert.started = Date.now();
@@ -2424,6 +2461,7 @@ function boot() {
   if (!restored) loadDemo();
   try { const last = JSON.parse(localStorage.getItem(STORE_KEY + ":last") || "null"); if (restored && last && last.cloudId && current) current.cloudId = last.cloudId; } catch (e) {}
   Library.init();
+  wakeOmrServer(); // 잠든 변환 서버를 미리 깨워 둔다
   if (matchMedia("(pointer: coarse)").matches) $("#hintKeys").hidden = true;
   requestAnimationFrame(frame);
 }
