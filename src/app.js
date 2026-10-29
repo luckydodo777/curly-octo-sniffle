@@ -1225,7 +1225,7 @@ function setSong(raw, meta) {
   song.flagged = new Map(); current.flags.forEach((f) => { if (f.m < song.measures.length) song.flagged.set(f.m, (song.flagged.get(f.m) || []).concat(f.issues)); });
   renderFlags(); renderTempos();
   $("#songTitle").textContent = song.title || meta.name || "제목 없는 악보";
-  const kindBadge = { musicxml: "MusicXML", midi: "MIDI", demo: "예제 곡", ai: "AI 초안" }[meta.kind] || meta.kind;
+  const kindBadge = { musicxml: "MusicXML", midi: "MIDI", demo: "예제 곡", ai: "AI 초안", omr: "자동 변환" }[meta.kind] || meta.kind;
   $("#songMeta").innerHTML = `<span class="badge${meta.kind === "ai" ? " ai" : ""}">${kindBadge}</span>${song.composer ? `<span>${esc(song.composer)}</span>` : ""}<span>${song.measures.length}마디 · ♩=${Math.round(song.baseBpm)}</span><span>오른손 ${song.notes.filter((n) => n.hand === "R").length} · 왼손 ${song.notes.filter((n) => n.hand === "L").length}음</span>`;
   $("#aiBanner").hidden = meta.kind !== "ai";
   $("#origBtn").hidden = !(meta.origImages && meta.origImages.length);
@@ -1279,7 +1279,7 @@ async function openFile(file) {
     }
     if (ext === "mxl") { const xml = await mxlToXml(await file.arrayBuffer()); setSong(parseMusicXML(xml), { kind: "musicxml", xml, name }); toast("악보를 불러왔어요"); return; }
     if (ext === "musicxml" || ext === "xml" || file.type.includes("xml")) { const xml = await file.text(); setSong(parseMusicXML(xml), { kind: "musicxml", xml, name }); toast("악보를 불러왔어요"); return; }
-    if (ext === "pdf" || file.type === "application/pdf" || file.type.startsWith("image/") || /^(png|jpe?g|webp|gif|bmp|heic)$/.test(ext)) { openAIDialog(file); return; }
+    if (ext === "pdf" || file.type === "application/pdf" || file.type.startsWith("image/") || /^(png|jpe?g|webp|gif|bmp|heic)$/.test(ext)) { if (Library.available && !window.GUNBAN_AI_ADAPTER && !(window.claude && window.claude.use)) autoConvert(file); else openAIDialog(file); return; }
     // 확장자를 모르면 내용으로 판별
     const head = new Uint8Array(await file.slice(0, 4).arrayBuffer());
     if (head[0] === 0x4d && head[1] === 0x54) { const buf = await file.arrayBuffer(); setSong(parseMIDI(buf), { kind: "midi", name }); return; }
@@ -1310,11 +1310,17 @@ async function firebaseBackend(cfg) {
   const app = fa.initializeApp(cfg); const auth = au.getAuth(app); const db = fs.getFirestore(app);
   try { await au.getRedirectResult(auth); } catch (e) {}
   return {
-    onAuth: (cb) => au.onAuthStateChanged(auth, (u) => cb(u ? { uid: u.uid, name: u.displayName || "", email: u.email || "", photo: u.photoURL || "" } : null)),
+    onAuth: (cb) => au.onAuthStateChanged(auth, (u) => cb(u ? { uid: u.uid, name: u.displayName || "", email: u.email || "", photo: u.photoURL || "", anon: !!u.isAnonymous } : null)),
+    // 로그인 없이 바로 쓰기: 이 브라우저 전용 임시 계정
+    signInAnon: () => au.signInAnonymously(auth),
     async signIn() {
       const p = new au.GoogleAuthProvider(); p.setCustomParameters({ prompt: "select_account" }); // 매번 계정 고르기 창
-      try { await au.signInWithPopup(auth, p); }
-      catch (e) { if (e && (e.code === "auth/popup-blocked" || e.code === "auth/operation-not-supported-in-this-environment")) await au.signInWithRedirect(auth, p); else throw e; }
+      const cur = auth.currentUser;
+      try {
+        // 임시 계정으로 쓰던 기록은 구글 계정에 그대로 이어 붙인다
+        if (cur && cur.isAnonymous) { try { await au.linkWithPopup(cur, p); await cur.reload(); return; } catch (e) { if (!(e && (e.code === "auth/credential-already-in-use" || e.code === "auth/email-already-in-use"))) throw e; } }
+        await au.signInWithPopup(auth, p);
+      } catch (e) { if (e && (e.code === "auth/popup-blocked" || e.code === "auth/operation-not-supported-in-this-environment")) await au.signInWithRedirect(auth, p); else throw e; }
     },
     signOut: () => au.signOut(auth),
     set: (path, obj, merge) => fs.setDoc(fs.doc(db, path), obj, { merge: !!merge }),
@@ -1340,7 +1346,16 @@ const Library = {
     // Claude 안의 앱은 외부 접속이 막혀 로그인할 수 없으므로, 웹 버전으로 가는 링크를 보여 준다
     $("#webLink").hidden = this.available || !FIREBASE_CONFIG.apiKey || !window.claude;
     if (!this.available) return;
-    this.be.onAuth((u) => { this.user = u; renderAccount(); });
+    this.be.onAuth((u) => { const first = !this.user && u; this.user = u; renderAccount(); if (first) Convert.resume(); });
+  },
+  // 로그인하지 않았으면 이 브라우저 전용 임시 계정을 자동으로 만든다 (Firebase 익명 로그인)
+  async ensureUser() {
+    if (this.user) return this.user;
+    if (!this.be.signInAnon) throw new Error("로그인이 필요해요");
+    await this.be.signInAnon();
+    for (let i = 0; i < 50 && !this.user; i++) await new Promise((r) => setTimeout(r, 100));
+    if (!this.user) throw new Error("임시 계정을 만들지 못했어요");
+    return this.user;
   },
   root() { return `users/${this.user.uid}`; },
   songPath(id) { return `${this.root()}/songs/${id}`; },
@@ -1398,7 +1413,7 @@ const Library = {
     const aiObj = ai ? JSON.parse(ai) : null;
     setSong(raw, { kind: d.kind, xml: xml || null, name: d.name, midiB64: midi || null, flags: d.flags || [], report: d.report || null, fixed: d.fixed || [], ai: aiObj, cloudId: id, fromLibrary: true });
     current.hasCloudOriginal = !!(d.original && big.orig);
-    toast(`'${d.title}'을(를) 열었어요`);
+    toast(d.kind === "omr" && !(d.tempos && d.tempos.length) ? `'${d.title}'을(를) 열었어요. 자동 변환은 빠르기표를 읽지 못하니, 설정 → 빠르기에서 악보의 ♩= 숫자로 고쳐 주세요.` : `'${d.title}'을(를) 열었어요`);
   },
   async getOriginalFile(id) {
     const sp = this.songPath(id); const d = await this.be.get(sp); if (!d || !d.original || !(d.big && d.big.orig)) return null;
@@ -1423,7 +1438,53 @@ const Library = {
     } catch (e) { console.warn("session", e); }
   },
   async sessions(id) { return this.be.list(`${this.songPath(id)}/sessions`, { orderBy: "at", dir: "desc", limit: 20 }); },
+  // 무료 자동 변환(Audiveris) 요청: 원본을 계정에 올리고 대기열에 등록 → GitHub Actions(omr.yml)가 처리
+  async submitOmr(file) {
+    if (!this.user) throw new Error("로그인이 필요해요");
+    if (file.size > 6e6) throw new Error("6MB보다 큰 파일은 변환할 수 없어요");
+    const id = this.be.newId(`${this.root()}/omrJobs`); const jp = `${this.root()}/omrJobs/${id}`;
+    const n = await this.putBig(jp, "orig", b64(await file.arrayBuffer()), 0);
+    const now = Date.now();
+    await this.be.set(jp, { status: "queued", name: file.name, type: file.type || "", size: file.size, createdAt: now, big: { orig: n } });
+    await this.be.set(`omrQueue/${id}`, { uid: this.user.uid, createdAt: now });
+    this.watchJobs();
+    return id;
+  },
+  async jobs() { return this.be.list(`${this.root()}/omrJobs`, { orderBy: "createdAt", dir: "desc", limit: 20 }); },
+  async removeJob(id) { const jp = `${this.root()}/omrJobs/${id}`; const d = await this.be.get(jp).catch(() => null); for (let i = 0; i < ((d && d.big && d.big.orig) || 0); i++) await this.be.del(`${jp}/chunks/orig_${i}`).catch(() => {}); await this.be.del(jp); },
+  jobT: 0, known: {},
+  // 변환 중인 작업이 있으면 1분마다 확인하고, 끝나면 알려 준다
+  watchJobs() {
+    clearTimeout(this.jobT); if (!this.user) return;
+    this.jobT = setTimeout(async () => {
+      let js = []; try { js = await this.jobs(); } catch (e) { return; }
+      let pending = false;
+      js.forEach((j) => { const was = this.known[j.id]; if ((j.status === "done" || j.status === "failed") && was && was !== j.status) toast(j.status === "done" ? `'${j.name}' 변환이 끝났어요. 내 악보함에서 열어 보세요.` : `'${j.name}' 변환에 실패했어요: ${j.error || ""}`); this.known[j.id] = j.status; if (j.status === "queued" || j.status === "running") pending = true; });
+      if (!$("#libModal").hidden) renderJobs(js);
+      if (pending) this.watchJobs();
+    }, $("#libModal") && !$("#libModal").hidden ? 15000 : 60000);
+  },
 };
+const OMR_ACTIONS_URL = "https://github.com/luckydodo777/curly-octo-sniffle/actions/workflows/omr.yml";
+const JOB_STATUS = { queued: "대기 중", running: "변환 중", done: "완료", failed: "실패" };
+function renderJobs(js) {
+  const box = $("#jobList"); if (!box) return; box.innerHTML = "";
+  const list = js.filter((j) => j.status !== "done" || Date.now() - (j.finishedAt || 0) < 7 * 864e5);
+  $("#jobSec").hidden = !list.length;
+  list.forEach((j) => {
+    const li = document.createElement("li"); li.className = "lib-item job " + j.status;
+    const info = document.createElement("div"); info.className = "lib-info";
+    const t = document.createElement("b"); t.textContent = j.name || "악보";
+    const m = document.createElement("span"); m.className = "status";
+    m.textContent = `${JOB_STATUS[j.status] || j.status} · 요청 ${fmtDate(j.createdAt)}${j.status === "done" && j.info ? ` · ${j.info.measures}마디, ${j.info.seconds}초 걸림` : ""}${j.status === "failed" ? " · " + (j.error || "") : ""}${j.status === "queued" ? " · 보통 5분 안에 시작돼요" : ""}`;
+    info.append(t, m);
+    const acts = document.createElement("div"); acts.className = "lib-acts";
+    if (j.status === "done" && j.songId) { const b = document.createElement("button"); b.type = "button"; b.className = "btn small primary"; b.textContent = "열기"; b.onclick = async () => { try { await Library.open(j.songId); $("#libModal").hidden = true; } catch (e) { toast(e.message); } }; acts.appendChild(b); }
+    if (j.status === "queued") { const a = document.createElement("a"); a.className = "btn small"; a.href = OMR_ACTIONS_URL; a.target = "_blank"; a.rel = "noopener"; a.textContent = "지금 바로 시작"; a.title = "GitHub에서 Run workflow 를 누르면 기다리지 않고 바로 변환해요"; acts.appendChild(a); }
+    if (j.status !== "running") { const d = document.createElement("button"); d.type = "button"; d.className = "btn small"; d.textContent = "목록에서 지우기"; d.onclick = async () => { await Library.removeJob(j.id).catch(() => {}); renderJobs(await Library.jobs()); }; acts.appendChild(d); }
+    li.append(info, acts); box.appendChild(li);
+  });
+}
 // 연습 한 번(재생 시작~멈춤)을 기록한다
 const Practice = {
   snap: null,
@@ -1439,8 +1500,9 @@ document.addEventListener("visibilitychange", () => { if (document.hidden && E.p
 function fmtDate(ms) { if (!ms) return ""; const d = new Date(ms); const p = (n) => String(n).padStart(2, "0"); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; }
 function renderAccount() {
   const u = Library.user;
-  $("#loginBtn").hidden = !!u; $("#libBtn").hidden = !u;
-  if (u) $("#libBtnName").textContent = (u.name || u.email || "내 악보함").split(" ")[0];
+  $("#loginBtn").hidden = !!(u && !u.anon); $("#libBtn").hidden = !u;
+  if (u) $("#libBtnName").textContent = u.anon ? "(이 브라우저)" : (u.name || u.email || "").split(" ")[0];
+  $("#loginBtn").title = u && u.anon ? "지금은 이 브라우저에만 저장돼요. 구글로 로그인하면 기록이 계정으로 옮겨져 다른 기기에서도 보여요" : "구글 계정으로 로그인하면 올린 악보와 연습 기록이 계정에 저장돼요";
   if (!$("#libModal").hidden) renderLibrary();
 }
 async function renderLibrary() {
@@ -1448,10 +1510,11 @@ async function renderLibrary() {
   $("#libUser").textContent = u ? `${u.name || ""} ${u.email ? "· " + u.email : ""}` : "";
   $("#libSaveCur").hidden = !(u && current && current.kind !== "demo" && !current.cloudId);
   list.innerHTML = ""; st.textContent = "불러오는 중…";
+  Library.jobs().then((js) => { renderJobs(js); if (js.some((j) => j.status === "queued" || j.status === "running")) Library.watchJobs(); }).catch(() => {});
   let songs = [];
   try { songs = await Library.list(); } catch (e) { st.textContent = "악보함을 불러오지 못했어요. 인터넷 연결을 확인해 주세요."; return; }
   st.textContent = songs.length ? `악보 ${songs.length}개` : "아직 저장된 악보가 없어요. 로그인한 상태에서 악보를 올리면 자동으로 여기에 저장돼요.";
-  const kindName = { musicxml: "MusicXML", midi: "MIDI", ai: "AI 초안", demo: "예제" };
+  const kindName = { musicxml: "MusicXML", midi: "MIDI", ai: "AI 초안", omr: "자동 변환", demo: "예제" };
   songs.forEach((d) => {
     const li = document.createElement("li"); li.className = "lib-item" + (current && current.cloudId === d.id ? " on" : "");
     const s = d.stats || {};
@@ -1482,6 +1545,7 @@ async function renderLibrary() {
     acts.append(bOpen, bLog, bDel); li.append(info, acts, logBox); list.appendChild(li);
   });
 }
+$("#omrChipClose").onclick = () => { $("#omrChip").hidden = true; };
 $("#loginBtn").onclick = async () => { try { await Library.be.signIn(); } catch (e) { toast(e && e.code === "auth/popup-closed-by-user" ? "로그인을 취소했어요" : "로그인하지 못했어요: " + (e && (e.code || e.message) || "")); } };
 $("#libBtn").onclick = () => { $("#libModal").hidden = false; renderLibrary(); };
 $("#libClose").onclick = () => { $("#libModal").hidden = true; };
@@ -1760,14 +1824,16 @@ async function verifySystem(sample, sys, measures, st, firstNumber, opts) {
 async function poolRun(items, n, fn) { let next = 0; const worker = async () => { while (next < items.length) { const k = next++; await fn(items[k], k); } }; await Promise.all(Array.from({ length: Math.min(n, items.length) }, worker)); }
 async function openAIDialog(file) {
   const modal = $("#aiModal"); modal.hidden = false;
+  $("#aiTitle").textContent = "PDF·사진 악보 읽기"; $("#aiGo").textContent = "AI로 악보 읽기";
   const go = $("#aiGo"), desc = $("#aiDesc"), st = $("#aiStatus"), thumbs = $("#aiThumbs"), prog = $("#aiProg"), vbox = $("#aiVerifyRow");
   thumbs.innerHTML = ""; st.textContent = ""; prog.hidden = true; go.hidden = false; go.disabled = true; vbox.hidden = true;
   let ctl = null, systems = [];
   $("#aiCancel").onclick = () => { if (ctl) ctl.abort(); modal.hidden = true; };
   const sample = await getSample();
   const caps = sample ? await sample.limits().catch(() => null) : null;
+  if ((!sample || !caps || !caps.images) && Library.available) { modal.hidden = true; autoConvert(file); return; }
   if (!sample || !caps || !caps.images) {
-    desc.innerHTML = "이 화면에서는 AI 악보 읽기를 쓸 수 없어요. PDF·사진 악보는 이렇게 바꿔서 올려 주세요.";
+    desc.innerHTML = `이 화면에서는 PDF·사진을 바로 읽을 수 없어요. <a href="https://luckydodo777.github.io/curly-octo-sniffle/" target="_blank" rel="noopener">웹 버전</a>에서 올리면 파일만 올려도 자동으로 변환돼요. 또는 아래처럼 직접 바꿔서 올려 주세요.`;
     thumbs.innerHTML = `<ol class="steps"><li><b>MuseScore 4</b>(무료)를 설치해요.</li><li>파일 → 가져오기에서 PDF를 열어요(악보 인식 기능이 MusicXML로 바꿔 줘요).</li><li>틀린 음을 고친 뒤 파일 → 내보내기 → <b>MusicXML</b>로 저장해요.</li><li>여기서 <b>악보 올리기</b>로 그 파일을 열어요.</li></ol>`;
     go.hidden = true; return;
   }
@@ -1853,6 +1919,47 @@ async function openAIDialog(file) {
       go.disabled = false;
     }
   };
+}
+// 악보 파일만 올리면 끝: 자동으로 변환을 요청하고, 진행 상황을 보여 주고, 끝나면 자동으로 연다 (AI 토큰 사용 없음)
+const Convert = {
+  jobId: null, name: "", t: 0, started: 0,
+  chip(text, cls, withLink) {
+    const c = $("#omrChip"); c.hidden = !text; c.className = "omr-chip " + (cls || "");
+    $("#omrChipText").textContent = text || "";
+    $("#omrChipLink").hidden = !withLink;
+  },
+  remember() { try { localStorage.setItem(STORE_KEY + ":omrJob", JSON.stringify(this.jobId ? { id: this.jobId, name: this.name, started: this.started } : null)); } catch (e) {} },
+  elapsed() { const s = Math.round((Date.now() - this.started) / 1000); return s < 60 ? `${s}초` : `${Math.floor(s / 60)}분 ${s % 60}초`; },
+  async poll() {
+    clearTimeout(this.t); if (!this.jobId || !Library.user) return;
+    let j = null; try { j = await Library.be.get(`${Library.root()}/omrJobs/${this.jobId}`); } catch (e) {}
+    if (!j) { this.chip(""); this.jobId = null; this.remember(); return; }
+    if (j.status === "done" && j.songId) {
+      this.chip(`'${this.name}' 변환 완료! 여는 중…`, "ok"); const id = j.songId; this.jobId = null; this.remember();
+      try { await Library.open(id); } catch (e) { toast("변환은 끝났지만 열지 못했어요. 내 악보함에서 열어 주세요."); }
+      setTimeout(() => this.chip(""), 4000); return;
+    }
+    if (j.status === "failed") { this.chip(`'${this.name}' 변환 실패: ${j.error || "알 수 없는 오류"} (더 선명한 PDF로 다시 올려 보세요)`, "bad"); this.jobId = null; this.remember(); return; }
+    const msg = j.status === "running" ? `악보를 인식하는 중… (${this.elapsed()})` : `변환 순서를 기다리는 중… (${this.elapsed()}, 보통 5~10분 안에 시작돼요)`;
+    this.chip(`'${this.name}' ${msg}`, "", j.status === "queued");
+    this.t = setTimeout(() => this.poll(), 10000);
+  },
+  resume() { try { const r = JSON.parse(localStorage.getItem(STORE_KEY + ":omrJob") || "null"); if (r && r.id && Date.now() - r.started < 6 * 3600e3) { Object.assign(this, { jobId: r.id, name: r.name, started: r.started }); this.poll(); } } catch (e) {} },
+};
+async function autoConvert(file) {
+  if (file.size > 6e6) { toast("6MB보다 큰 파일은 변환할 수 없어요. 페이지를 나눠서 올려 주세요."); return; }
+  Convert.name = file.name; Convert.started = Date.now();
+  Convert.chip(`'${file.name}' 올리는 중…`);
+  try { await Library.ensureUser(); }
+  catch (e) {
+    Convert.chip("변환하려면 로그인이 필요해요. 위의 '구글로 로그인'을 누른 뒤 파일을 다시 올려 주세요.", "bad");
+    return;
+  }
+  try {
+    Convert.jobId = await Library.submitOmr(file); Convert.remember();
+    toast("악보 변환을 시작했어요. 끝나면 자동으로 열려요. 그동안 다른 곡을 연습해도 돼요.");
+    Convert.poll();
+  } catch (e) { Convert.chip(`'${file.name}' 변환을 요청하지 못했어요: ${e.message || ""}`, "bad"); }
 }
 /* ---- "지금 마디 다시 확인": 이상하게 들리는 마디를 원본 그림과 다시 비교해서 고친다 ---- */
 let recheckBusy = false;

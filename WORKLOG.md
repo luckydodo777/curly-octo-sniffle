@@ -4,6 +4,19 @@ Claude와 GPT가 서로에게 전달할 내용을 여기에 남긴다. 형식은
 
 ---
 
+## 2026-10-30 · Claude · claude/omr-auto
+- 바꾼 것: "악보 파일만 올리면 끝" — 웹(Pages)에서 PDF·사진을 올리면 안내 창·버튼 없이 바로 무료 자동 변환을 요청. 로그인 안 했으면 Firebase 익명 로그인(이 브라우저 전용 임시 계정)을 자동으로 씀. 화면 위 진행 표시줄(#omrChip, 10초마다 확인, 새로고침해도 이어서 확인), 끝나면 악보를 자동으로 열어 줌. 구글 로그인 시 임시 계정을 linkWithPopup 으로 구글 계정에 이어 붙여 기록 유지. 웹에서는 MuseScore 안내 창이 더 이상 안 나옴(AI 어댑터가 있는 Claude 버전은 기존 AI 읽기 그대로).
+- worker.py `--linger 600`: 한 번 실행하면 10분 동안 20초마다 새 작업을 확인 → 이어서 올린 악보는 거의 바로 처리.
+- 사용자 할 일: Firebase Authentication → 익명(Anonymous) 제공업체 사용 설정 (docs/FIREBASE_SETUP.md 2단계). 안 켜면 "로그인이 필요해요" 안내가 나오고 구글 로그인 후에는 그대로 동작.
+- 테스트: run_all 41/41 (자동 변환 흐름·자동 열기·익명 불가 시 안내).
+
+## 2026-10-30 · Claude · claude/omr-converter
+- 바꾼 것: 토큰 없는 악보 인식 "무료 자동 변환" — Audiveris(오픈소스 OMR)를 GitHub Actions에서 실행. 앱(로그인, Pages)에서 PDF·사진을 올리면 변환 요청 → 몇 분 뒤 "내 악보함"에 MusicXML로 들어옴. 내 악보함에 변환 진행 상황 표시, 끝나면 알림.
+- 근거(실측): MuseScore로 만든 공개 악보 PDF를 Audiveris로 다시 읽어 앱 파서로 비교 → 환희의 송가 80/80음, 직접 만든 어려운 연습곡(16분음표·화음·붙임줄·제자리표·셋잇단·2성부) 52/52음 완전 일치. 한 곡 14초. 빠르기표는 못 읽음. 손가락 번호 "3"을 셋잇단으로 오인한 사례 있음(예제 원본은 손가락 번호 제거 후 100%).
+- 사용자 할 일: Firebase 서비스 계정 키를 GitHub 비밀값 FIREBASE_SERVICE_ACCOUNT 로 등록 + 최신 firestore.rules 게시 (docs/FIREBASE_SETUP.md 8~9단계).
+- 테스트: run_all 39/39, omr-test(실제 Audiveris 왕복 비교)는 CI에서.
+- 다음 사람에게: Audiveris 결과에 빠르기표를 넣는 방법(텍스트 인식 또는 사용자 입력 유도) 개선 여지. 여러 페이지/악장 PDF는 첫 결과만 씀(worker.py convert).
+
 ## 2026-10-29 · Claude · claude/claude-login-link
 - 바꾼 것: Claude 아티팩트 안에서는(외부 접속 차단으로 Firebase 불가) 로그인 버튼 대신 "로그인해서 쓰기" 링크(GitHub Pages 주소)를 보여 줌. 실제 로그인 버튼은 Pages 주소에서 정상 표시되는 것을 사용자가 확인함.
 - 테스트: run_all 통과.

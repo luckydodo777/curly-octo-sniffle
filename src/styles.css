@@ -164,3 +164,15 @@ ol.steps b{color:var(--ink)}
 .lib-acts{display:flex;gap:6px;flex-wrap:wrap}
 .lib-log{flex-basis:100%;font-size:12.5px;color:var(--muted);display:flex;flex-direction:column;gap:3px;max-height:180px;overflow:auto}
 .btn.danger{border-color:var(--bad);color:var(--bad)}
+.lib-h{margin:4px 0 6px;font-size:11.5px;letter-spacing:.08em;color:var(--muted);font-weight:600}
+.lib-item.job.queued,.lib-item.job.running{border-style:dashed}
+.lib-item.job.failed{border-color:var(--bad)}
+.omr-chip{order:5;flex-basis:100%;display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:8px;background:var(--accent-soft);color:var(--ink);font-size:13px;min-width:0}
+.omr-chip #omrChipText{flex:1;min-width:0}
+.omr-chip a{color:var(--accent);font-weight:600;white-space:nowrap}
+.omr-chip button{border:0;background:transparent;font-size:16px;cursor:pointer;color:var(--muted)}
+.omr-chip[hidden]{display:none}
+.omr-chip.ok{background:color-mix(in srgb,var(--ok) 18%,transparent)}.omr-chip.bad{background:color-mix(in srgb,var(--bad) 18%,transparent)}
+.omr-dot{width:8px;height:8px;border-radius:50%;background:var(--accent);flex:none;animation:omrpulse 1.2s ease-in-out infinite}
+.omr-chip.ok .omr-dot{background:var(--ok);animation:none}.omr-chip.bad .omr-dot{background:var(--bad);animation:none}
+@keyframes omrpulse{50%{opacity:.25}}
