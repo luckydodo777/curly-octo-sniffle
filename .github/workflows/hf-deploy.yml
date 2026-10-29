@@ -1,0 +1,20 @@
+name: hf-deploy
+# omr/ 변환 서버를 Hugging Face Space로 올린다. 비밀값 HF_TOKEN 이 없으면 아무것도 하지 않는다.
+on:
+  push:
+    branches: [main]
+    paths: ["omr/Dockerfile", "omr/server.py", "omr/worker.py", "omr/deploy_hf.py", ".github/workflows/hf-deploy.yml"]
+  workflow_dispatch:
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    env:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      HF_SPACE: ${{ secrets.HF_SPACE }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -q huggingface_hub
+      - run: python omr/deploy_hf.py

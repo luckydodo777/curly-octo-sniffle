@@ -1279,7 +1279,7 @@ async function openFile(file) {
     }
     if (ext === "mxl") { const xml = await mxlToXml(await file.arrayBuffer()); setSong(parseMusicXML(xml), { kind: "musicxml", xml, name }); toast("악보를 불러왔어요"); return; }
     if (ext === "musicxml" || ext === "xml" || file.type.includes("xml")) { const xml = await file.text(); setSong(parseMusicXML(xml), { kind: "musicxml", xml, name }); toast("악보를 불러왔어요"); return; }
-    if (ext === "pdf" || file.type === "application/pdf" || file.type.startsWith("image/") || /^(png|jpe?g|webp|gif|bmp|heic)$/.test(ext)) { if (Library.available && !window.GUNBAN_AI_ADAPTER && !(window.claude && window.claude.use)) autoConvert(file); else openAIDialog(file); return; }
+    if (ext === "pdf" || file.type === "application/pdf" || file.type.startsWith("image/") || /^(png|jpe?g|webp|gif|bmp|heic)$/.test(ext)) { const noAI = !window.GUNBAN_AI_ADAPTER && !(window.claude && window.claude.use); if (noAI && omrServer()) serverConvert(file); else if (noAI && Library.available) autoConvert(file); else openAIDialog(file); return; }
     // 확장자를 모르면 내용으로 판별
     const head = new Uint8Array(await file.slice(0, 4).arrayBuffer());
     if (head[0] === 0x4d && head[1] === 0x54) { const buf = await file.arrayBuffer(); setSong(parseMIDI(buf), { kind: "midi", name }); return; }
@@ -1303,6 +1303,12 @@ $("#saveXmlBtn").onclick = async () => {
    ============================================================ */
 const FIREBASE_CONFIG = { apiKey: "AIzaSyCjxx7m4hoOWm2fkIeb-biPsNbzL_PkUCU", authDomain: "rmtlove777.firebaseapp.com", projectId: "rmtlove777", appId: "1:636976181085:web:d5c54d87decdda3a6902b4" };
 const FIREBASE_VERSION = "10.12.2";
+// 악보 변환 서버(Audiveris, Hugging Face Space). 비어 있으면 예전 방식(대기열 + GitHub Actions)을 쓴다. docs/OMR_SERVER.md
+const OMR_SERVER_URL = "";
+// 무료 즉시 시작 중계기(Cloudflare Worker): 올리자마자 GitHub 변환을 바로 실행시킨다. 비어 있으면 5분 예약 실행을 기다림. docs/OMR_FAST.md
+const OMR_KICK_URL = "";
+const omrKick = () => (window.GUNBAN_OMR_KICK || OMR_KICK_URL || "");
+const omrServer = () => (window.GUNBAN_OMR_SERVER || OMR_SERVER_URL || "").replace(/\/+$/, "");
 const CLOUD_CHUNK = 300000; // 문서 하나 1MB 제한 → 큰 글자 데이터는 30만 자씩 나눠 저장
 async function firebaseBackend(cfg) {
   const base = `https://www.gstatic.com/firebasejs/${FIREBASE_VERSION}/`;
@@ -1546,7 +1552,18 @@ async function renderLibrary() {
   });
 }
 $("#omrChipClose").onclick = () => { $("#omrChip").hidden = true; };
-$("#loginBtn").onclick = async () => { try { await Library.be.signIn(); } catch (e) { toast(e && e.code === "auth/popup-closed-by-user" ? "로그인을 취소했어요" : "로그인하지 못했어요: " + (e && (e.code || e.message) || "")); } };
+// Firebase 로그인 오류를 초보자도 알 수 있는 말로
+function authErrorText(e) {
+  const c = (e && e.code) || "";
+  if (c === "auth/popup-closed-by-user" || c === "auth/cancelled-popup-request") return "로그인을 취소했어요";
+  if (c === "auth/configuration-not-found") return "아직 Firebase 로그인이 켜져 있지 않아요. Firebase 콘솔 → Authentication → '시작하기'를 누르고 Google·익명 로그인을 사용 설정해 주세요.";
+  if (c === "auth/operation-not-allowed" || c === "auth/admin-restricted-operation") return "Firebase 콘솔 → Authentication → 로그인 방법에서 Google(과 익명) 로그인을 사용 설정해 주세요.";
+  if (c === "auth/unauthorized-domain") return "Firebase 콘솔 → Authentication → 설정 → 승인된 도메인에 luckydodo777.github.io 를 추가해 주세요.";
+  if (c === "auth/popup-blocked") return "팝업이 차단됐어요. 주소창의 팝업 차단을 풀고 다시 눌러 주세요.";
+  if (c === "auth/network-request-failed") return "인터넷 연결을 확인해 주세요.";
+  return "로그인하지 못했어요: " + (c || (e && e.message) || "");
+}
+$("#loginBtn").onclick = async () => { try { await Library.be.signIn(); } catch (e) { toast(authErrorText(e)); } };
 $("#libBtn").onclick = () => { $("#libModal").hidden = false; renderLibrary(); };
 $("#libClose").onclick = () => { $("#libModal").hidden = true; };
 $("#logoutBtn").onclick = async () => { Practice.flush(); await Library.be.signOut(); $("#libModal").hidden = true; toast("로그아웃했어요"); };
@@ -1922,7 +1939,7 @@ async function openAIDialog(file) {
 }
 // 악보 파일만 올리면 끝: 자동으로 변환을 요청하고, 진행 상황을 보여 주고, 끝나면 자동으로 연다 (AI 토큰 사용 없음)
 const Convert = {
-  jobId: null, name: "", t: 0, started: 0,
+  jobId: null, name: "", t: 0, started: 0, kicked: false,
   chip(text, cls, withLink) {
     const c = $("#omrChip"); c.hidden = !text; c.className = "omr-chip " + (cls || "");
     $("#omrChipText").textContent = text || "";
@@ -1940,23 +1957,60 @@ const Convert = {
       setTimeout(() => this.chip(""), 4000); return;
     }
     if (j.status === "failed") { this.chip(`'${this.name}' 변환 실패: ${j.error || "알 수 없는 오류"} (더 선명한 PDF로 다시 올려 보세요)`, "bad"); this.jobId = null; this.remember(); return; }
-    const msg = j.status === "running" ? `악보를 인식하는 중… (${this.elapsed()})` : `변환 순서를 기다리는 중… (${this.elapsed()}, 보통 5~10분 안에 시작돼요)`;
-    this.chip(`'${this.name}' ${msg}`, "", j.status === "queued");
-    this.t = setTimeout(() => this.poll(), 10000);
+    const msg = j.status === "running" ? `악보를 인식하는 중… (${this.elapsed()})` : (this.kicked ? `변환 준비 중… (${this.elapsed()}, 보통 1~2분이면 열려요)` : `변환 순서를 기다리는 중… (${this.elapsed()}, 보통 5~10분 안에 시작돼요)`);
+    this.chip(`'${this.name}' ${msg}`, "", j.status === "queued" && !this.kicked);
+    this.t = setTimeout(() => this.poll(), this.kicked || j.status === "running" ? 4000 : 10000);
   },
   resume() { try { const r = JSON.parse(localStorage.getItem(STORE_KEY + ":omrJob") || "null"); if (r && r.id && Date.now() - r.started < 6 * 3600e3) { Object.assign(this, { jobId: r.id, name: r.name, started: r.started }); this.poll(); } } catch (e) {} },
 };
+// 변환 서버로 바로 보내고 결과를 받아 연다 (보통 20~40초, 잠든 서버는 처음 한 번 1분쯤 더)
+let omrBusy = false;
+function wakeOmrServer() { const u = omrServer(); if (u) fetch(u + "/health", { cache: "no-store" }).catch(() => {}); }
+async function serverConvert(file) {
+  const url = omrServer();
+  if (omrBusy) { toast("앞의 악보를 변환하는 중이에요. 끝나면 다시 올려 주세요."); return; }
+  if (file.size > 15e6) { toast("15MB보다 큰 파일은 변환할 수 없어요. 페이지를 나눠서 올려 주세요."); return; }
+  omrBusy = true; Convert.name = file.name; Convert.started = Date.now();
+  let phase = "인식하는 중"; const tick = () => Convert.chip(`'${file.name}' 악보를 ${phase}… (${Convert.elapsed()})`);
+  tick(); const timer = setInterval(tick, 1000);
+  const ctl = new AbortController(); const kill = setTimeout(() => ctl.abort(), 6 * 60e3);
+  try {
+    let res = null, data = null;
+    for (let tries = 0; ; tries++) {
+      try { res = await fetch(url + "/convert", { method: "POST", body: file, signal: ctl.signal, headers: { "Content-Type": file.type || "application/octet-stream", "X-File-Name": encodeURIComponent(file.name) } }); }
+      catch (e) { if (ctl.signal.aborted) throw new Error("시간이 너무 오래 걸려 멈췄어요"); res = null; }
+      // 잠든 서버가 깨어나는 동안에는 연결이 안 되거나 502/503이 온다 → 잠시 뒤 다시
+      const waking = !res || res.status === 502 || res.status === 503 || res.status === 504;
+      if (waking && tries < 30) { const busy = res && res.status === 503 ? await res.clone().json().then((d) => d.busy).catch(() => false) : false; phase = busy ? "변환하려고 순서를 기다리는 중" : "변환 서버를 깨우는 중(처음 한 번만 1분쯤 걸려요)"; tick(); await new Promise((r) => setTimeout(r, 5000)); continue; }
+      data = res ? await res.json().catch(() => null) : null; break;
+    }
+    if (!data || !data.xml) throw new Error((data && data.error) || `변환 서버 오류 (${res ? res.status : "연결 안 됨"})`);
+    phase = "여는 중";
+    const raw = parseMusicXML(data.xml); if (!raw.title || /^(title|untitled)$/i.test(raw.title.trim())) raw.title = file.name.replace(/\.[^.]+$/, "");
+    setSong(raw, { kind: "omr", xml: data.xml, name: file.name, file });
+    clearInterval(timer);
+    Convert.chip(`'${file.name}' 변환 완료! (${Convert.elapsed()})`, "ok"); setTimeout(() => Convert.chip(""), 5000);
+    toast("자동 변환은 빠르기표를 읽지 못해요. 빠르기가 다르면 설정 → 빠르기에서 악보의 ♩= 숫자로 고쳐 주세요.");
+  } catch (e) {
+    clearInterval(timer);
+    if (Library.available && !ctl.signal.aborted && !(e && /MB|악보를 찾지/.test(e.message || ""))) { toast("변환 서버가 응답하지 않아 예비 방식(몇 분 걸림)으로 변환할게요."); omrBusy = false; clearTimeout(kill); autoConvert(file); return; }
+    Convert.chip(`'${file.name}' 변환 실패: ${(e && e.message) || "알 수 없는 오류"} (더 선명한 PDF로 다시 올려 보세요)`, "bad");
+  } finally { omrBusy = false; clearTimeout(kill); }
+}
 async function autoConvert(file) {
   if (file.size > 6e6) { toast("6MB보다 큰 파일은 변환할 수 없어요. 페이지를 나눠서 올려 주세요."); return; }
   Convert.name = file.name; Convert.started = Date.now();
   Convert.chip(`'${file.name}' 올리는 중…`);
   try { await Library.ensureUser(); }
   catch (e) {
-    Convert.chip("변환하려면 로그인이 필요해요. 위의 '구글로 로그인'을 누른 뒤 파일을 다시 올려 주세요.", "bad");
+    const c = e && e.code;
+    Convert.chip(c && c !== "auth/admin-restricted-operation" && c !== "auth/operation-not-allowed" ? authErrorText(e) : "변환하려면 로그인이 필요해요. 위의 '구글로 로그인'을 누른 뒤 파일을 다시 올려 주세요. (Firebase에서 익명 로그인을 켜면 로그인 없이도 돼요)", "bad");
     return;
   }
   try {
     Convert.jobId = await Library.submitOmr(file); Convert.remember();
+    Convert.kicked = false;
+    if (omrKick()) { try { const r = await fetch(omrKick(), { method: "POST" }); Convert.kicked = r.ok; } catch (e) {} }
     toast("악보 변환을 시작했어요. 끝나면 자동으로 열려요. 그동안 다른 곡을 연습해도 돼요.");
     Convert.poll();
   } catch (e) { Convert.chip(`'${file.name}' 변환을 요청하지 못했어요: ${e.message || ""}`, "bad"); }
@@ -2033,6 +2087,7 @@ function boot() {
   if (!restored) loadDemo();
   try { const last = JSON.parse(localStorage.getItem(STORE_KEY + ":last") || "null"); if (restored && last && last.cloudId && current) current.cloudId = last.cloudId; } catch (e) {}
   Library.init();
+  wakeOmrServer(); // 잠든 변환 서버를 미리 깨워 둔다
   if (matchMedia("(pointer: coarse)").matches) $("#hintKeys").hidden = true;
   requestAnimationFrame(frame);
 }

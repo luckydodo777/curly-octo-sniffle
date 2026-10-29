@@ -1,6 +1,7 @@
 name: omr
 # 앱에서 올린 PDF·사진을 Audiveris로 MusicXML로 바꿔 "내 악보함"에 넣는다 (Claude/GPT 토큰 사용 없음).
-# 5분마다 대기열을 확인하고, 일이 없으면 몇 초 만에 끝난다. 앱의 "지금 변환" 링크로 바로 실행할 수도 있다.
+# 앱이 올리자마자 중계기(relay/kick-worker.js)로 바로 실행시킨다(1~2분). 중계기가 없으면 5분 예약 실행이 예비로 돈다.
+# 일이 없으면 몇 초 만에 끝난다. 한 번 돌면 10분 동안 5초마다 새 작업을 확인해 이어 올린 악보는 거의 바로 처리.
 on:
   schedule:
     - cron: "*/5 * * * *"
@@ -25,11 +26,13 @@ jobs:
         if: steps.sa.outputs.ok == 'yes'
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: omr/requirements.txt
       - name: 대기열 확인
         id: q
         if: steps.sa.outputs.ok == 'yes'
         run: |
-          pip install -q firebase-admin
+          pip install -q -r omr/requirements.txt
           set +e; python omr/worker.py --check; c=$?; set -e
           if [ $c -eq 0 ]; then echo "has=yes" >> "$GITHUB_OUTPUT"; elif [ $c -eq 10 ]; then echo "has=no" >> "$GITHUB_OUTPUT"; else exit $c; fi
       - name: Audiveris 준비 (캐시)
@@ -46,7 +49,7 @@ jobs:
           mkdir -p /tmp/aud /tmp/audx
           ls /tmp/aud/*.deb >/dev/null 2>&1 || gh release download 5.11.0 -R Audiveris/audiveris --pattern '*ubuntu24.04*.deb' -D /tmp/aud
           dpkg-deb -x /tmp/aud/*.deb /tmp/audx
-          sudo apt-get install -y -q xvfb >/dev/null
+          command -v xvfb-run >/dev/null || sudo apt-get install -y -q xvfb >/dev/null
       - name: 변환
         if: steps.q.outputs.has == 'yes'
         run: python omr/worker.py --run --linger 600 --audiveris /tmp/audx/opt/audiveris/bin/Audiveris
