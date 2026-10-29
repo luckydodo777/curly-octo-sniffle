@@ -1546,7 +1546,18 @@ async function renderLibrary() {
   });
 }
 $("#omrChipClose").onclick = () => { $("#omrChip").hidden = true; };
-$("#loginBtn").onclick = async () => { try { await Library.be.signIn(); } catch (e) { toast(e && e.code === "auth/popup-closed-by-user" ? "로그인을 취소했어요" : "로그인하지 못했어요: " + (e && (e.code || e.message) || "")); } };
+// Firebase 로그인 오류를 초보자도 알 수 있는 말로
+function authErrorText(e) {
+  const c = (e && e.code) || "";
+  if (c === "auth/popup-closed-by-user" || c === "auth/cancelled-popup-request") return "로그인을 취소했어요";
+  if (c === "auth/configuration-not-found") return "아직 Firebase 로그인이 켜져 있지 않아요. Firebase 콘솔 → Authentication → '시작하기'를 누르고 Google·익명 로그인을 사용 설정해 주세요.";
+  if (c === "auth/operation-not-allowed" || c === "auth/admin-restricted-operation") return "Firebase 콘솔 → Authentication → 로그인 방법에서 Google(과 익명) 로그인을 사용 설정해 주세요.";
+  if (c === "auth/unauthorized-domain") return "Firebase 콘솔 → Authentication → 설정 → 승인된 도메인에 luckydodo777.github.io 를 추가해 주세요.";
+  if (c === "auth/popup-blocked") return "팝업이 차단됐어요. 주소창의 팝업 차단을 풀고 다시 눌러 주세요.";
+  if (c === "auth/network-request-failed") return "인터넷 연결을 확인해 주세요.";
+  return "로그인하지 못했어요: " + (c || (e && e.message) || "");
+}
+$("#loginBtn").onclick = async () => { try { await Library.be.signIn(); } catch (e) { toast(authErrorText(e)); } };
 $("#libBtn").onclick = () => { $("#libModal").hidden = false; renderLibrary(); };
 $("#libClose").onclick = () => { $("#libModal").hidden = true; };
 $("#logoutBtn").onclick = async () => { Practice.flush(); await Library.be.signOut(); $("#libModal").hidden = true; toast("로그아웃했어요"); };
@@ -1952,7 +1963,8 @@ async function autoConvert(file) {
   Convert.chip(`'${file.name}' 올리는 중…`);
   try { await Library.ensureUser(); }
   catch (e) {
-    Convert.chip("변환하려면 로그인이 필요해요. 위의 '구글로 로그인'을 누른 뒤 파일을 다시 올려 주세요.", "bad");
+    const c = e && e.code;
+    Convert.chip(c && c !== "auth/admin-restricted-operation" && c !== "auth/operation-not-allowed" ? authErrorText(e) : "변환하려면 로그인이 필요해요. 위의 '구글로 로그인'을 누른 뒤 파일을 다시 올려 주세요. (Firebase에서 익명 로그인을 켜면 로그인 없이도 돼요)", "bad");
     return;
   }
   try {

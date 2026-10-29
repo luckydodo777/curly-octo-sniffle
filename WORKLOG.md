@@ -4,6 +4,10 @@ Claude와 GPT가 서로에게 전달할 내용을 여기에 남긴다. 형식은
 
 ---
 
+## 2026-10-30 · Claude · claude/auth-errors
+- 바꾼 것: 로그인 실패 시 Firebase 오류 코드를 쉬운 안내로 바꿔 보여 줌(authErrorText). 원인 확인: 배포본에서 Auth API가 CONFIGURATION_NOT_FOUND → Firebase 콘솔에서 Authentication '시작하기'가 아직 안 된 상태.
+- 테스트: run_all 통과.
+
 ## 2026-10-30 · Claude · claude/omr-auto
 - 바꾼 것: "악보 파일만 올리면 끝" — 웹(Pages)에서 PDF·사진을 올리면 안내 창·버튼 없이 바로 무료 자동 변환을 요청. 로그인 안 했으면 Firebase 익명 로그인(이 브라우저 전용 임시 계정)을 자동으로 씀. 화면 위 진행 표시줄(#omrChip, 10초마다 확인, 새로고침해도 이어서 확인), 끝나면 악보를 자동으로 열어 줌. 구글 로그인 시 임시 계정을 linkWithPopup 으로 구글 계정에 이어 붙여 기록 유지. 웹에서는 MuseScore 안내 창이 더 이상 안 나옴(AI 어댑터가 있는 Claude 버전은 기존 AI 읽기 그대로).
 - worker.py `--linger 600`: 한 번 실행하면 10분 동안 20초마다 새 작업을 확인 → 이어서 올린 악보는 거의 바로 처리.
