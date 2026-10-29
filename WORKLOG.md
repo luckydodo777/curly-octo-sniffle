@@ -17,6 +17,10 @@ Claude와 GPT가 서로에게 전달할 내용을 여기에 남긴다. 형식은
 - 테스트: run_all 39/39, omr-test(실제 Audiveris 왕복 비교)는 CI에서.
 - 다음 사람에게: Audiveris 결과에 빠르기표를 넣는 방법(텍스트 인식 또는 사용자 입력 유도) 개선 여지. 여러 페이지/악장 PDF는 첫 결과만 씀(worker.py convert).
 
+## 2026-10-29 · Claude · claude/claude-login-link
+- 바꾼 것: Claude 아티팩트 안에서는(외부 접속 차단으로 Firebase 불가) 로그인 버튼 대신 "로그인해서 쓰기" 링크(GitHub Pages 주소)를 보여 줌. 실제 로그인 버튼은 Pages 주소에서 정상 표시되는 것을 사용자가 확인함.
+- 테스트: run_all 통과.
+
 ## 2026-10-29 · Claude · claude/firebase-config
 - 바꾼 것: FIREBASE_CONFIG 에 사용자의 Firebase 프로젝트(rmtlove777) 웹 설정값을 넣어 구글 로그인·내 악보함을 켬. (웹 설정값은 비밀이 아님. 보호는 firestore.rules)
 - 확인할 것: 사용자가 Authentication(Google)·승인된 도메인(luckydodo777.github.io)·Firestore(규칙 게시)를 마쳤는지. 배포 후 Pages 주소에서 실제 로그인·저장 확인 필요.
