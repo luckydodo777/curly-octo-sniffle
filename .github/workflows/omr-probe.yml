@@ -25,19 +25,18 @@ jobs:
             ls -la omr/test
           } > $P/02_pdf.txt 2>&1
           {
-            mkdir -p /tmp/aud
-            gh release download -R Audiveris/audiveris --pattern '*buntu*24*' -D /tmp/aud || gh release download -R Audiveris/audiveris --pattern '*.deb' -D /tmp/aud
-            ls -la /tmp/aud
-            sudo apt-get install -y /tmp/aud/*.deb
-            PKG=$(dpkg-deb -f /tmp/aud/*.deb Package); echo "PKG=$PKG"
-            dpkg -L $PKG | grep -E 'bin/' | head -20
+            mkdir -p /tmp/aud /tmp/audx
+            gh release download -R Audiveris/audiveris --pattern '*ubuntu24.04*.deb' -D /tmp/aud
+            dpkg-deb -x /tmp/aud/*.deb /tmp/audx
+            find /tmp/audx -maxdepth 4 -type d | head -20
+            find /tmp/audx -type f -iname 'audiveris*' | head
           } > $P/03_install.txt 2>&1
           {
-            PKG=$(dpkg-deb -f /tmp/aud/*.deb Package)
-            BIN=$(dpkg -L $PKG | grep -iE '/bin/audiveris$' | head -1); echo "BIN=$BIN"
+            BIN=$(find /tmp/audx -type f -path '*bin/Audiveris' | head -1); echo "BIN=$BIN"
             time xvfb-run -a "$BIN" -batch -transcribe -export -output /tmp/out omr/test/ode.pdf
+            echo "exit=$?"
             find /tmp/out -type f -exec ls -la {} \;
-            mkdir -p $P/out; cp /tmp/out/*.mxl $P/out/ 2>/dev/null; cp -r /tmp/out/*.log $P/out/ 2>/dev/null; true
+            mkdir -p $P/out; cp /tmp/out/*.mxl $P/out/ 2>/dev/null; cp /tmp/out/*.log $P/out/ 2>/dev/null; true
           } > $P/04_convert.txt 2>&1
           cp omr/test/ode.pdf $P/ 2>/dev/null || true
       - name: 결과를 브랜치에 기록

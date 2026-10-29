@@ -1,29 +1,0 @@
-+ mkdir -p /tmp/aud
-+ gh release download -R Audiveris/audiveris --pattern '*buntu*24*' -D /tmp/aud
-+ ls -la /tmp/aud
-total 75904
-drwxr-xr-x  2 runner runner     4096 Oct 29 18:24 .
-drwxrwxrwt 14 root   root       4096 Oct 29 18:24 ..
--rw-r--r--  1 runner runner 77716868 Oct 29 18:24 Audiveris-5.11.0-ubuntu24.04-x86_64.deb
-+ sudo apt-get install -y /tmp/aud/Audiveris-5.11.0-ubuntu24.04-x86_64.deb
-Reading package lists...
-Building dependency tree...
-Reading state information...
-The following NEW packages will be installed:
-  audiveris
-0 upgraded, 1 newly installed, 0 to remove and 5 not upgraded.
-Need to get 0 B/77.7 MB of archives.
-After this operation, 190 MB of additional disk space will be used.
-Get:1 /tmp/aud/Audiveris-5.11.0-ubuntu24.04-x86_64.deb audiveris amd64 5.11.0 [77.7 MB]
-Selecting previously unselected package audiveris.
-(Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 218528 files and directories currently installed.)
-Preparing to unpack .../Audiveris-5.11.0-ubuntu24.04-x86_64.deb ...
-Unpacking audiveris (5.11.0) ...
-Setting up audiveris (5.11.0) ...
-xdg-desktop-menu: No writable system menu directory found.
-dpkg: error processing package audiveris (--configure):
- installed audiveris package post-installation script subprocess returned error exit status 3
-Errors were encountered while processing:
- audiveris
-needrestart is being skipped since dpkg has failed
-E: Sub-process /usr/bin/dpkg returned an error code (1)
