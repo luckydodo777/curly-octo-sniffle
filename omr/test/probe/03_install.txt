@@ -1,0 +1,23 @@
++ mkdir -p /tmp/aud /tmp/audx
++ gh release download -R Audiveris/audiveris --pattern '*ubuntu24.04*.deb' -D /tmp/aud
++ dpkg-deb -x /tmp/aud/Audiveris-5.11.0-ubuntu24.04-x86_64.deb /tmp/audx
++ find /tmp/audx -maxdepth 4 -type d
++ head -20
+/tmp/audx
+/tmp/audx/opt
+/tmp/audx/opt/audiveris
+/tmp/audx/opt/audiveris/bin
+/tmp/audx/opt/audiveris/lib
+/tmp/audx/opt/audiveris/lib/runtime
+/tmp/audx/opt/audiveris/lib/app
+/tmp/audx/opt/audiveris/share
+/tmp/audx/opt/audiveris/share/doc
++ find /tmp/audx -type f -iname 'audiveris*'
++ head
+/tmp/audx/opt/audiveris/bin/Audiveris
+/tmp/audx/opt/audiveris/lib/app/Audiveris.cfg
+/tmp/audx/opt/audiveris/lib/app/Audiveris.class
+/tmp/audx/opt/audiveris/lib/app/audiveris.jar
+/tmp/audx/opt/audiveris/lib/Audiveris.png
+/tmp/audx/opt/audiveris/lib/audiveris-Audiveris.desktop
+/tmp/audx/opt/audiveris/lib/audiveris-Audiveris-MimeInfo.xml
