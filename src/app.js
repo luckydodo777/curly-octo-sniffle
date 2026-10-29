@@ -1415,6 +1415,7 @@ const Library = {
     const [xml, midi, ai] = await Promise.all([this.getBig(sp, "xml", big.xml), this.getBig(sp, "midi", big.midi), this.getBig(sp, "ai", big.ai)]);
     let raw;
     if (xml) raw = parseMusicXML(xml); else if (midi) { raw = parseMIDI(unb64(midi)); raw.title = d.title; } else throw new Error("악보 내용이 비어 있어요");
+    if (d.title && (!raw.title || raw.title === "제목 없는 악보")) raw.title = d.title; // 자동 변환 악보는 제목이 없을 때가 많다
     if (Array.isArray(d.tempos) && d.tempos.length) raw.tempos = d.tempos.map((t) => ({ ...t }));
     const aiObj = ai ? JSON.parse(ai) : null;
     setSong(raw, { kind: d.kind, xml: xml || null, name: d.name, midiB64: midi || null, flags: d.flags || [], report: d.report || null, fixed: d.fixed || [], ai: aiObj, cloudId: id, fromLibrary: true });
@@ -1986,7 +1987,7 @@ async function serverConvert(file) {
     }
     if (!data || !data.xml) throw new Error((data && data.error) || `변환 서버 오류 (${res ? res.status : "연결 안 됨"})`);
     phase = "여는 중";
-    const raw = parseMusicXML(data.xml); if (!raw.title || /^(title|untitled)$/i.test(raw.title.trim())) raw.title = file.name.replace(/\.[^.]+$/, "");
+    const raw = parseMusicXML(data.xml); if (!raw.title || raw.title === "제목 없는 악보" || /^(title|untitled)$/i.test(raw.title.trim())) raw.title = file.name.replace(/\.[^.]+$/, "");
     setSong(raw, { kind: "omr", xml: data.xml, name: file.name, file });
     clearInterval(timer);
     Convert.chip(`'${file.name}' 변환 완료! (${Convert.elapsed()})`, "ok"); setTimeout(() => Convert.chip(""), 5000);
