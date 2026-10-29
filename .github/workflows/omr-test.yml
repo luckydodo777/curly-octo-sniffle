@@ -47,6 +47,16 @@ jobs:
           for i in $(seq 1 60); do curl -fs localhost:7860/health && break; sleep 1; done; echo
           curl -fsi -X OPTIONS localhost:7860/convert -H 'Origin: https://luckydodo777.github.io' | grep -i 'access-control-allow-origin'
           mkdir -p /tmp/srvout
+          f0=$(ls /tmp/pdf/*.pdf | head -1)
+          code=$(curl -s -o /tmp/r0.json -w '%{http_code}' -X POST localhost:7860/convert -H 'Content-Type: application/pdf' -H 'X-File-Name: t.pdf' --data-binary "@$f0")
+          if [ "$code" != "200" ]; then
+            echo "::warning::server status $code: $(head -c 300 /tmp/r0.json)"
+            docker cp "$f0" omr:/tmp/x.pdf
+            docker exec omr sh -c 'xvfb-run -a /opt/audiveris/bin/Audiveris -batch -transcribe -export -output /tmp/o /tmp/x.pdf 2>&1 | tail -25' > /tmp/aud.log 2>&1 || true
+            while IFS= read -r line; do echo "::warning::aud: ${line:0:250}"; done < /tmp/aud.log
+            docker exec omr sh -c 'ls /opt/audiveris/bin /opt/audiveris/lib | head; id; echo $HOME' | while IFS= read -r line; do echo "::warning::env: $line"; done
+            exit 1
+          fi
           for f in /tmp/pdf/*.pdf; do n=$(basename "$f" .pdf); s=$(date +%s)
             curl -fsS -X POST localhost:7860/convert -H 'Content-Type: application/pdf' -H "X-File-Name: $n.pdf" --data-binary "@$f" -o "/tmp/srvout/$n.json"
             python -c "import json,sys; d=json.load(open(sys.argv[1])); open(sys.argv[2],'w').write(d['xml']); print(sys.argv[3], d['info'])" "/tmp/srvout/$n.json" "/tmp/srvout/$n.musicxml" "$n"
