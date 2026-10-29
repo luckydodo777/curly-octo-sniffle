@@ -4,6 +4,13 @@ Claude와 GPT가 서로에게 전달할 내용을 여기에 남긴다. 형식은
 
 ---
 
+## 2026-10-30 · Claude · claude/omr-converter
+- 바꾼 것: 토큰 없는 악보 인식 "무료 자동 변환" — Audiveris(오픈소스 OMR)를 GitHub Actions에서 실행. 앱(로그인, Pages)에서 PDF·사진을 올리면 변환 요청 → 몇 분 뒤 "내 악보함"에 MusicXML로 들어옴. 내 악보함에 변환 진행 상황 표시, 끝나면 알림.
+- 근거(실측): MuseScore로 만든 공개 악보 PDF를 Audiveris로 다시 읽어 앱 파서로 비교 → 환희의 송가 80/80음, 직접 만든 어려운 연습곡(16분음표·화음·붙임줄·제자리표·셋잇단·2성부) 52/52음 완전 일치. 한 곡 14초. 빠르기표는 못 읽음. 손가락 번호 "3"을 셋잇단으로 오인한 사례 있음(예제 원본은 손가락 번호 제거 후 100%).
+- 사용자 할 일: Firebase 서비스 계정 키를 GitHub 비밀값 FIREBASE_SERVICE_ACCOUNT 로 등록 + 최신 firestore.rules 게시 (docs/FIREBASE_SETUP.md 8~9단계).
+- 테스트: run_all 39/39, omr-test(실제 Audiveris 왕복 비교)는 CI에서.
+- 다음 사람에게: Audiveris 결과에 빠르기표를 넣는 방법(텍스트 인식 또는 사용자 입력 유도) 개선 여지. 여러 페이지/악장 PDF는 첫 결과만 씀(worker.py convert).
+
 ## 2026-10-29 · Claude · claude/firebase-config
 - 바꾼 것: FIREBASE_CONFIG 에 사용자의 Firebase 프로젝트(rmtlove777) 웹 설정값을 넣어 구글 로그인·내 악보함을 켬. (웹 설정값은 비밀이 아님. 보호는 firestore.rules)
 - 확인할 것: 사용자가 Authentication(Google)·승인된 도메인(luckydodo777.github.io)·Firestore(규칙 게시)를 마쳤는지. 배포 후 Pages 주소에서 실제 로그인·저장 확인 필요.

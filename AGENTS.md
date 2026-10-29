@@ -10,7 +10,7 @@
 ```bash
 python build.py                 # src/ + assets/ → dist/건반내비.html
 npm install --no-save playwright@1.48.2 && npx playwright install chromium
-node tests/run_all.js           # 34개 테스트
+node tests/run_all.js           # 39개 테스트
 ```
 
 ## 실제 앱(사용자가 쓰는 화면)

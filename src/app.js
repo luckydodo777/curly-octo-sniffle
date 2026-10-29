@@ -1225,7 +1225,7 @@ function setSong(raw, meta) {
   song.flagged = new Map(); current.flags.forEach((f) => { if (f.m < song.measures.length) song.flagged.set(f.m, (song.flagged.get(f.m) || []).concat(f.issues)); });
   renderFlags(); renderTempos();
   $("#songTitle").textContent = song.title || meta.name || "제목 없는 악보";
-  const kindBadge = { musicxml: "MusicXML", midi: "MIDI", demo: "예제 곡", ai: "AI 초안" }[meta.kind] || meta.kind;
+  const kindBadge = { musicxml: "MusicXML", midi: "MIDI", demo: "예제 곡", ai: "AI 초안", omr: "자동 변환" }[meta.kind] || meta.kind;
   $("#songMeta").innerHTML = `<span class="badge${meta.kind === "ai" ? " ai" : ""}">${kindBadge}</span>${song.composer ? `<span>${esc(song.composer)}</span>` : ""}<span>${song.measures.length}마디 · ♩=${Math.round(song.baseBpm)}</span><span>오른손 ${song.notes.filter((n) => n.hand === "R").length} · 왼손 ${song.notes.filter((n) => n.hand === "L").length}음</span>`;
   $("#aiBanner").hidden = meta.kind !== "ai";
   $("#origBtn").hidden = !(meta.origImages && meta.origImages.length);
@@ -1396,7 +1396,7 @@ const Library = {
     const aiObj = ai ? JSON.parse(ai) : null;
     setSong(raw, { kind: d.kind, xml: xml || null, name: d.name, midiB64: midi || null, flags: d.flags || [], report: d.report || null, fixed: d.fixed || [], ai: aiObj, cloudId: id, fromLibrary: true });
     current.hasCloudOriginal = !!(d.original && big.orig);
-    toast(`'${d.title}'을(를) 열었어요`);
+    toast(d.kind === "omr" && !(d.tempos && d.tempos.length) ? `'${d.title}'을(를) 열었어요. 자동 변환은 빠르기표를 읽지 못하니, 설정 → 빠르기에서 악보의 ♩= 숫자로 고쳐 주세요.` : `'${d.title}'을(를) 열었어요`);
   },
   async getOriginalFile(id) {
     const sp = this.songPath(id); const d = await this.be.get(sp); if (!d || !d.original || !(d.big && d.big.orig)) return null;
@@ -1421,7 +1421,53 @@ const Library = {
     } catch (e) { console.warn("session", e); }
   },
   async sessions(id) { return this.be.list(`${this.songPath(id)}/sessions`, { orderBy: "at", dir: "desc", limit: 20 }); },
+  // 무료 자동 변환(Audiveris) 요청: 원본을 계정에 올리고 대기열에 등록 → GitHub Actions(omr.yml)가 처리
+  async submitOmr(file) {
+    if (!this.user) throw new Error("로그인이 필요해요");
+    if (file.size > 6e6) throw new Error("6MB보다 큰 파일은 변환할 수 없어요");
+    const id = this.be.newId(`${this.root()}/omrJobs`); const jp = `${this.root()}/omrJobs/${id}`;
+    const n = await this.putBig(jp, "orig", b64(await file.arrayBuffer()), 0);
+    const now = Date.now();
+    await this.be.set(jp, { status: "queued", name: file.name, type: file.type || "", size: file.size, createdAt: now, big: { orig: n } });
+    await this.be.set(`omrQueue/${id}`, { uid: this.user.uid, createdAt: now });
+    this.watchJobs();
+    return id;
+  },
+  async jobs() { return this.be.list(`${this.root()}/omrJobs`, { orderBy: "createdAt", dir: "desc", limit: 20 }); },
+  async removeJob(id) { const jp = `${this.root()}/omrJobs/${id}`; const d = await this.be.get(jp).catch(() => null); for (let i = 0; i < ((d && d.big && d.big.orig) || 0); i++) await this.be.del(`${jp}/chunks/orig_${i}`).catch(() => {}); await this.be.del(jp); },
+  jobT: 0, known: {},
+  // 변환 중인 작업이 있으면 1분마다 확인하고, 끝나면 알려 준다
+  watchJobs() {
+    clearTimeout(this.jobT); if (!this.user) return;
+    this.jobT = setTimeout(async () => {
+      let js = []; try { js = await this.jobs(); } catch (e) { return; }
+      let pending = false;
+      js.forEach((j) => { const was = this.known[j.id]; if ((j.status === "done" || j.status === "failed") && was && was !== j.status) toast(j.status === "done" ? `'${j.name}' 변환이 끝났어요. 내 악보함에서 열어 보세요.` : `'${j.name}' 변환에 실패했어요: ${j.error || ""}`); this.known[j.id] = j.status; if (j.status === "queued" || j.status === "running") pending = true; });
+      if (!$("#libModal").hidden) renderJobs(js);
+      if (pending) this.watchJobs();
+    }, $("#libModal") && !$("#libModal").hidden ? 15000 : 60000);
+  },
 };
+const OMR_ACTIONS_URL = "https://github.com/luckydodo777/curly-octo-sniffle/actions/workflows/omr.yml";
+const JOB_STATUS = { queued: "대기 중", running: "변환 중", done: "완료", failed: "실패" };
+function renderJobs(js) {
+  const box = $("#jobList"); if (!box) return; box.innerHTML = "";
+  const list = js.filter((j) => j.status !== "done" || Date.now() - (j.finishedAt || 0) < 7 * 864e5);
+  $("#jobSec").hidden = !list.length;
+  list.forEach((j) => {
+    const li = document.createElement("li"); li.className = "lib-item job " + j.status;
+    const info = document.createElement("div"); info.className = "lib-info";
+    const t = document.createElement("b"); t.textContent = j.name || "악보";
+    const m = document.createElement("span"); m.className = "status";
+    m.textContent = `${JOB_STATUS[j.status] || j.status} · 요청 ${fmtDate(j.createdAt)}${j.status === "done" && j.info ? ` · ${j.info.measures}마디, ${j.info.seconds}초 걸림` : ""}${j.status === "failed" ? " · " + (j.error || "") : ""}${j.status === "queued" ? " · 보통 5분 안에 시작돼요" : ""}`;
+    info.append(t, m);
+    const acts = document.createElement("div"); acts.className = "lib-acts";
+    if (j.status === "done" && j.songId) { const b = document.createElement("button"); b.type = "button"; b.className = "btn small primary"; b.textContent = "열기"; b.onclick = async () => { try { await Library.open(j.songId); $("#libModal").hidden = true; } catch (e) { toast(e.message); } }; acts.appendChild(b); }
+    if (j.status === "queued") { const a = document.createElement("a"); a.className = "btn small"; a.href = OMR_ACTIONS_URL; a.target = "_blank"; a.rel = "noopener"; a.textContent = "지금 바로 시작"; a.title = "GitHub에서 Run workflow 를 누르면 기다리지 않고 바로 변환해요"; acts.appendChild(a); }
+    if (j.status !== "running") { const d = document.createElement("button"); d.type = "button"; d.className = "btn small"; d.textContent = "목록에서 지우기"; d.onclick = async () => { await Library.removeJob(j.id).catch(() => {}); renderJobs(await Library.jobs()); }; acts.appendChild(d); }
+    li.append(info, acts); box.appendChild(li);
+  });
+}
 // 연습 한 번(재생 시작~멈춤)을 기록한다
 const Practice = {
   snap: null,
@@ -1446,10 +1492,11 @@ async function renderLibrary() {
   $("#libUser").textContent = u ? `${u.name || ""} ${u.email ? "· " + u.email : ""}` : "";
   $("#libSaveCur").hidden = !(u && current && current.kind !== "demo" && !current.cloudId);
   list.innerHTML = ""; st.textContent = "불러오는 중…";
+  Library.jobs().then((js) => { renderJobs(js); if (js.some((j) => j.status === "queued" || j.status === "running")) Library.watchJobs(); }).catch(() => {});
   let songs = [];
   try { songs = await Library.list(); } catch (e) { st.textContent = "악보함을 불러오지 못했어요. 인터넷 연결을 확인해 주세요."; return; }
   st.textContent = songs.length ? `악보 ${songs.length}개` : "아직 저장된 악보가 없어요. 로그인한 상태에서 악보를 올리면 자동으로 여기에 저장돼요.";
-  const kindName = { musicxml: "MusicXML", midi: "MIDI", ai: "AI 초안", demo: "예제" };
+  const kindName = { musicxml: "MusicXML", midi: "MIDI", ai: "AI 초안", omr: "자동 변환", demo: "예제" };
   songs.forEach((d) => {
     const li = document.createElement("li"); li.className = "lib-item" + (current && current.cloudId === d.id ? " on" : "");
     const s = d.stats || {};
@@ -1758,12 +1805,14 @@ async function verifySystem(sample, sys, measures, st, firstNumber, opts) {
 async function poolRun(items, n, fn) { let next = 0; const worker = async () => { while (next < items.length) { const k = next++; await fn(items[k], k); } }; await Promise.all(Array.from({ length: Math.min(n, items.length) }, worker)); }
 async function openAIDialog(file) {
   const modal = $("#aiModal"); modal.hidden = false;
+  $("#aiTitle").textContent = "PDF·사진 악보 읽기"; $("#aiGo").textContent = "AI로 악보 읽기";
   const go = $("#aiGo"), desc = $("#aiDesc"), st = $("#aiStatus"), thumbs = $("#aiThumbs"), prog = $("#aiProg"), vbox = $("#aiVerifyRow");
   thumbs.innerHTML = ""; st.textContent = ""; prog.hidden = true; go.hidden = false; go.disabled = true; vbox.hidden = true;
   let ctl = null, systems = [];
   $("#aiCancel").onclick = () => { if (ctl) ctl.abort(); modal.hidden = true; };
   const sample = await getSample();
   const caps = sample ? await sample.limits().catch(() => null) : null;
+  if ((!sample || !caps || !caps.images) && Library.available) { showOmrOption(file); return; }
   if (!sample || !caps || !caps.images) {
     desc.innerHTML = "이 화면에서는 AI 악보 읽기를 쓸 수 없어요. PDF·사진 악보는 이렇게 바꿔서 올려 주세요.";
     thumbs.innerHTML = `<ol class="steps"><li><b>MuseScore 4</b>(무료)를 설치해요.</li><li>파일 → 가져오기에서 PDF를 열어요(악보 인식 기능이 MusicXML로 바꿔 줘요).</li><li>틀린 음을 고친 뒤 파일 → 내보내기 → <b>MusicXML</b>로 저장해요.</li><li>여기서 <b>악보 올리기</b>로 그 파일을 열어요.</li></ol>`;
@@ -1850,6 +1899,29 @@ async function openAIDialog(file) {
       st.textContent = code === "cancelled" ? "멈췄어요." : code === "not_granted" ? "AI 사용을 허용하지 않아서 읽지 못했어요." : code === "rate_limited" ? "요청이 많아요. 잠시 뒤 다시 시도해 주세요." : code === "invalid_json" ? "악보를 제대로 받아 적지 못했어요. 더 선명한 이미지로 다시 시도해 주세요." : "읽는 중에 문제가 생겼어요. " + (e && e.message ? e.message : "");
       go.disabled = false;
     }
+  };
+}
+// 무료 자동 변환(Audiveris) 안내 창 — AI 토큰을 쓰지 않는다
+function showOmrOption(file) {
+  const go = $("#aiGo"), desc = $("#aiDesc"), st = $("#aiStatus"), thumbs = $("#aiThumbs");
+  $("#aiTitle").textContent = "PDF·사진 악보 자동 변환";
+  desc.textContent = "악보 인식 프로그램(Audiveris)이 GitHub 무료 서버에서 PDF·사진을 MusicXML로 바꿔 '내 악보함'에 넣어 드려요. AI 토큰을 쓰지 않고, 깨끗한 인쇄 악보는 음·박자·붙임줄을 정확하게 읽어요. 보통 2~10분 걸려요. 빠르기표(♩=)는 읽지 못해서 열어 본 뒤 직접 고쳐 주세요.";
+  thumbs.innerHTML = ""; st.textContent = `${file.name} · ${(file.size / 1024).toFixed(0)}KB`;
+  go.hidden = false; go.disabled = false;
+  if (!Library.user) {
+    go.textContent = "구글로 로그인하고 계속";
+    go.onclick = async () => { try { await Library.be.signIn(); } catch (e) { st.textContent = "로그인하지 못했어요"; return; } setTimeout(() => showOmrOption(file), 300); };
+    return;
+  }
+  go.textContent = "무료 자동 변환 요청";
+  go.onclick = async () => {
+    go.disabled = true; st.textContent = "원본을 계정에 올리는 중…";
+    try {
+      await Library.submitOmr(file);
+      st.innerHTML = ""; st.append("요청했어요. 진행 상황은 '내 악보함'에서 볼 수 있고, 끝나면 알려 드려요. 기다리기 싫으면 ");
+      const a = document.createElement("a"); a.href = OMR_ACTIONS_URL; a.target = "_blank"; a.rel = "noopener"; a.textContent = "GitHub에서 바로 시작(Run workflow)"; st.append(a, "을 누르세요.");
+      go.textContent = "내 악보함 열기"; go.disabled = false; go.onclick = () => { $("#aiModal").hidden = true; $("#libModal").hidden = false; renderLibrary(); };
+    } catch (e) { st.textContent = e.message || "요청하지 못했어요"; go.disabled = false; }
   };
 }
 /* ---- "지금 마디 다시 확인": 이상하게 들리는 마디를 원본 그림과 다시 비교해서 고친다 ---- */

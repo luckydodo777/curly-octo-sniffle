@@ -1,0 +1,41 @@
+name: omr-test
+# 변환 엔진 회귀 시험: 공개 악보(예제·직접 만든 연습곡)를 PDF로 만든 뒤 Audiveris로 다시 읽어 원본과 음 단위로 비교한다.
+on:
+  pull_request:
+    paths: ["omr/**", ".github/workflows/omr*.yml"]
+  workflow_dispatch:
+jobs:
+  roundtrip:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - uses: actions/cache@v4
+        with:
+          path: /tmp/aud
+          key: audiveris-5.11.0-ubuntu24.04
+      - name: 도구 설치 (MuseScore, Audiveris)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sudo apt-get update -q && sudo apt-get install -y -q musescore3 xvfb >/dev/null
+          mkdir -p /tmp/aud /tmp/audx
+          ls /tmp/aud/*.deb >/dev/null 2>&1 || gh release download 5.11.0 -R Audiveris/audiveris --pattern '*ubuntu24.04*.deb' -D /tmp/aud
+          dpkg-deb -x /tmp/aud/*.deb /tmp/audx
+      - name: 시험 악보를 PDF로
+        run: |
+          mkdir -p /tmp/pdf
+          for f in omr/test/*.musicxml; do n=$(basename "$f" .musicxml); QT_QPA_PLATFORM=offscreen mscore3 -o "/tmp/pdf/$n.pdf" "$f" >/dev/null 2>&1 || xvfb-run -a mscore3 -o "/tmp/pdf/$n.pdf" "$f"; done
+          ls -la /tmp/pdf
+      - name: Audiveris로 다시 읽기
+        run: python omr/worker.py --local /tmp/pdf /tmp/omrout --audiveris /tmp/audx/opt/audiveris/bin/Audiveris
+      - name: 원본과 비교 (음높이·시작·길이·손 100% 일치해야 통과)
+        run: |
+          python build.py
+          npm install --no-save playwright@1.48.2 && npx playwright install --with-deps chromium >/dev/null
+          node tests/omr_compare.js omr/test /tmp/omrout
