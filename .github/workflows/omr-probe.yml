@@ -1,0 +1,36 @@
+name: omr-probe
+on:
+  push:
+    branches: [claude/omr-probe]
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Audiveris 최신 릴리스 자산 목록
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: gh release view -R Audiveris/audiveris --json tagName,assets --jq '.tagName, (.assets[].name)'
+      - name: MuseScore로 예제 PDF 만들기
+        run: |
+          sudo apt-get update -q && sudo apt-get install -y -q musescore3 xvfb >/dev/null
+          QT_QPA_PLATFORM=offscreen mscore3 -o omr/test/ode.pdf omr/test/ode.musicxml || xvfb-run -a mscore3 -o omr/test/ode.pdf omr/test/ode.musicxml
+          ls -la omr/test
+      - name: Audiveris 설치
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          gh release download -R Audiveris/audiveris --pattern '*ubuntu24*.deb' -D /tmp/aud || gh release download -R Audiveris/audiveris --pattern '*.deb' -D /tmp/aud
+          ls -la /tmp/aud
+          sudo apt-get install -y -q /tmp/aud/*.deb >/dev/null
+          dpkg -L $(dpkg-deb -f /tmp/aud/*.deb Package) | grep -iE 'bin/|launcher' | head
+      - name: 변환
+        run: |
+          BIN=$(dpkg -L $(dpkg-deb -f /tmp/aud/*.deb Package) | grep -E '/bin/[Aa]udiveris$' | head -1)
+          echo "BIN=$BIN"
+          xvfb-run -a "$BIN" -batch -transcribe -export -output /tmp/out omr/test/ode.pdf 2>&1 | tail -40
+          find /tmp/out -type f | head -20
+      - uses: actions/upload-artifact@v4
+        with:
+          name: probe
+          path: |
+            /tmp/out
+            omr/test/ode.pdf
