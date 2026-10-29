@@ -1337,6 +1337,8 @@ const Library = {
     } catch (e) { console.warn("cloud", e); this.be = null; }
     this.available = !!this.be;
     $("#accountBox").hidden = !this.available;
+    // Claude 안의 앱은 외부 접속이 막혀 로그인할 수 없으므로, 웹 버전으로 가는 링크를 보여 준다
+    $("#webLink").hidden = this.available || !FIREBASE_CONFIG.apiKey || !window.claude;
     if (!this.available) return;
     this.be.onAuth((u) => { this.user = u; renderAccount(); });
   },
