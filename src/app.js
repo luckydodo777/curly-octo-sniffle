@@ -1711,6 +1711,7 @@ $("#recheckBtn") && ($("#recheckBtn").onclick = () => {
    16) 시작
    ============================================================ */
 function boot() {
+  try { const bm = document.querySelector('meta[name="gunban-build"]'); if (bm) $("#buildInfo").textContent = "버전 " + bm.content + " (GitHub 자동 배포)"; } catch (e) {}
   setMode(settings.mode); setHands(settings.hands); setRate(settings.rate); updateOct();
   $("#metroBtn").setAttribute("aria-pressed", String(!!settings.metro)); $("#loopBtn").setAttribute("aria-pressed", String(!!settings.loopOn)); $("#loopOn").checked = !!settings.loopOn;
   applyView();

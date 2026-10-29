@@ -4,6 +4,14 @@ Claude와 GPT가 서로에게 전달할 내용을 여기에 남긴다. 형식은
 
 ---
 
+## 2026-10-29 · Claude · claude/pages-deploy
+- 바꾼 것: GitHub Pages 자동 배포(`.github/workflows/deploy.yml`) 추가. main 의 test 가 통과하면 https://luckydodo777.github.io/curly-octo-sniffle/ 에 앱이 올라감. 앱 설정 패널 맨 아래에 배포 버전(커밋·시각) 표시.
+- 이유: 사용자가 "GPT도 앱을 직접 고칠 수 있게" 요청. 이제 GPT·Claude 누가 고쳐도 main 에 들어가면 사용자 화면이 바로 바뀜.
+- 사용자 결정: 저장소를 공개로 전환(무료 요금제에서 Pages 사용 조건). 저장소에는 「Stay Alive」 악보·개인정보 없음.
+- 테스트: run_all 20/20 통과.
+- 참고: Pages 에서 열면 MIDI·마이크가 Claude 게시본보다 잘 동작함. 대신 AI 악보 읽기(window.claude)는 Pages 에서 꺼져 있음 → 필요하면 `window.GUNBAN_AI_ADAPTER` 로 다른 AI 연결(HANDOFF 6장).
+- 다음 사람에게: 마디 안 음을 직접 고치는 편집기가 여전히 추천 작업.
+
 ## 2026-10-29 · Claude · 첫 커밋 (main)
 - 바꾼 것: 공동 작업용 저장소를 만들었다. 게시본 v7과 같은 코드(빌드 결과가 게시본과 바이트 단위로 동일).
   - 협업 문서: `COLLAB.md`(규칙), `AGENTS.md`(GPT/Codex용), `CLAUDE.md`(Claude용), 이 `WORKLOG.md`.

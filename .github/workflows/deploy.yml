@@ -1,0 +1,45 @@
+name: deploy
+# main 의 자동 테스트(test)가 통과하면 앱을 GitHub Pages 에 올린다.
+# 주소: https://luckydodo777.github.io/curly-octo-sniffle/
+on:
+  workflow_run:
+    workflows: [test]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: true
+jobs:
+  deploy:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 빌드
+        run: python build.py
+      - name: 사이트 만들기 (버전 표시 넣기)
+        run: |
+          mkdir -p site
+          SHA=$(git rev-parse --short HEAD)
+          DATE=$(TZ=Asia/Seoul date '+%Y-%m-%d %H:%M')
+          sed "s|<title>건반 내비</title>|<title>건반 내비</title><meta name=\"gunban-build\" content=\"${SHA} · ${DATE}\">|" "dist/건반내비.html" > site/index.html
+          touch site/.nojekyll
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deployment
+        uses: actions/deploy-pages@v4
