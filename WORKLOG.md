@@ -4,6 +4,12 @@ Claude와 GPT가 서로에게 전달할 내용을 여기에 남긴다. 형식은
 
 ---
 
+## 2026-10-30 · Claude · claude/omr-server (추가)
+- 확인: Hugging Face Docker Space는 2026년 여름부터 PRO(유료) 필요 → 무료 기본 경로를 바꿈.
+- 바꾼 것: 무료 즉시 실행 중계기(relay/kick-worker.js, Cloudflare Workers 무료). 앱이 대기열에 올린 직후 OMR_KICK_URL 로 POST → omr.yml workflow_dispatch → 1~2분 안에 결과. 진행 표시 4초 간격 확인. omr.yml: pip 캐시, xvfb 있으면 설치 생략. worker --linger 확인 간격 20초→5초. HF 서버(OMR_SERVER_URL)는 유료 선택지로 남김.
+- 사용자 할 일: docs/OMR_FAST.md (GitHub fine-grained 토큰 Actions RW → Cloudflare Worker + Secret GH_TOKEN → 주소 알려 주기).
+- 테스트: run_all 통과(중계기 호출 확인 추가).
+
 ## 2026-10-30 · Claude · claude/omr-server
 - 바꾼 것: 변환이 오래 걸리는 원인 = GitHub 예약 실행(cron) 지연(실측: 20분 넘게 한 번도 안 돎). → 전용 변환 서버(omr/server.py + Dockerfile, Hugging Face Space 무료)를 추가하고, 앱은 PDF·사진을 서버로 바로 POST 해서 결과를 즉시 엶(로그인 불필요, 목표 20~40초). 잠든 서버는 앱 시작 시 /health 로 미리 깨우고, 깨우는 동안 502/503이면 5초마다 재시도. 서버 실패 시 기존 대기열 방식으로 자동 전환. PR #8(로그인 오류 안내) 포함.
 - 사용자 할 일: docs/OMR_SERVER.md (HF 가입 → Write 토큰 → GitHub 비밀값 HF_TOKEN → hf-deploy 실행 → 아이디 알려 주기). 그 뒤 OMR_SERVER_URL 채우기.

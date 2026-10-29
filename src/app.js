@@ -1305,6 +1305,9 @@ const FIREBASE_CONFIG = { apiKey: "AIzaSyCjxx7m4hoOWm2fkIeb-biPsNbzL_PkUCU", aut
 const FIREBASE_VERSION = "10.12.2";
 // 악보 변환 서버(Audiveris, Hugging Face Space). 비어 있으면 예전 방식(대기열 + GitHub Actions)을 쓴다. docs/OMR_SERVER.md
 const OMR_SERVER_URL = "";
+// 무료 즉시 시작 중계기(Cloudflare Worker): 올리자마자 GitHub 변환을 바로 실행시킨다. 비어 있으면 5분 예약 실행을 기다림. docs/OMR_FAST.md
+const OMR_KICK_URL = "";
+const omrKick = () => (window.GUNBAN_OMR_KICK || OMR_KICK_URL || "");
 const omrServer = () => (window.GUNBAN_OMR_SERVER || OMR_SERVER_URL || "").replace(/\/+$/, "");
 const CLOUD_CHUNK = 300000; // 문서 하나 1MB 제한 → 큰 글자 데이터는 30만 자씩 나눠 저장
 async function firebaseBackend(cfg) {
@@ -1936,7 +1939,7 @@ async function openAIDialog(file) {
 }
 // 악보 파일만 올리면 끝: 자동으로 변환을 요청하고, 진행 상황을 보여 주고, 끝나면 자동으로 연다 (AI 토큰 사용 없음)
 const Convert = {
-  jobId: null, name: "", t: 0, started: 0,
+  jobId: null, name: "", t: 0, started: 0, kicked: false,
   chip(text, cls, withLink) {
     const c = $("#omrChip"); c.hidden = !text; c.className = "omr-chip " + (cls || "");
     $("#omrChipText").textContent = text || "";
@@ -1954,9 +1957,9 @@ const Convert = {
       setTimeout(() => this.chip(""), 4000); return;
     }
     if (j.status === "failed") { this.chip(`'${this.name}' 변환 실패: ${j.error || "알 수 없는 오류"} (더 선명한 PDF로 다시 올려 보세요)`, "bad"); this.jobId = null; this.remember(); return; }
-    const msg = j.status === "running" ? `악보를 인식하는 중… (${this.elapsed()})` : `변환 순서를 기다리는 중… (${this.elapsed()}, 보통 5~10분 안에 시작돼요)`;
-    this.chip(`'${this.name}' ${msg}`, "", j.status === "queued");
-    this.t = setTimeout(() => this.poll(), 10000);
+    const msg = j.status === "running" ? `악보를 인식하는 중… (${this.elapsed()})` : (this.kicked ? `변환 준비 중… (${this.elapsed()}, 보통 1~2분이면 열려요)` : `변환 순서를 기다리는 중… (${this.elapsed()}, 보통 5~10분 안에 시작돼요)`);
+    this.chip(`'${this.name}' ${msg}`, "", j.status === "queued" && !this.kicked);
+    this.t = setTimeout(() => this.poll(), this.kicked || j.status === "running" ? 4000 : 10000);
   },
   resume() { try { const r = JSON.parse(localStorage.getItem(STORE_KEY + ":omrJob") || "null"); if (r && r.id && Date.now() - r.started < 6 * 3600e3) { Object.assign(this, { jobId: r.id, name: r.name, started: r.started }); this.poll(); } } catch (e) {} },
 };
@@ -2006,6 +2009,8 @@ async function autoConvert(file) {
   }
   try {
     Convert.jobId = await Library.submitOmr(file); Convert.remember();
+    Convert.kicked = false;
+    if (omrKick()) { try { const r = await fetch(omrKick(), { method: "POST" }); Convert.kicked = r.ok; } catch (e) {} }
     toast("악보 변환을 시작했어요. 끝나면 자동으로 열려요. 그동안 다른 곡을 연습해도 돼요.");
     Convert.poll();
   } catch (e) { Convert.chip(`'${file.name}' 변환을 요청하지 못했어요: ${e.message || ""}`, "bad"); }

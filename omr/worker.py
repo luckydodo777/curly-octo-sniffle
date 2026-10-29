@@ -96,14 +96,14 @@ def run_mode(args):
         queue = list(db.collection("omrQueue").order_by("createdAt").limit(10).stream())
         print(f"대기 작업 {len(queue)}개")
         return 0 if queue else 10
-    # --linger N: 처리 후에도 N초 동안 새 작업을 기다려 바로 처리 (Audiveris 설치를 다시 하지 않아 빠름)
+    # --linger N: 처리 후에도 N초 동안 5초마다 새 작업을 기다려 바로 처리 (Audiveris 설치를 다시 하지 않아 빠름)
     until = time.time() + max(0, args.linger)
     total = 0
     while True:
         total += process_queue(db, args)
         if time.time() >= until:
             break
-        time.sleep(20)
+        time.sleep(5)
     print(f"이번 실행에서 처리 {total}개")
     return 0
 

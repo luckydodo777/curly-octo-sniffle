@@ -163,17 +163,20 @@ async function openPage(browser, opts = {}) {
       window.GUNBAN_CLOUD_BACKEND = {
         onAuth: (f) => { cb = f; setTimeout(() => f(null), 0); }, signIn: async () => cb({ uid: 'u9', name: '사용자' }), signOut: async () => cb(null),
         signInAnon: async () => cb({ uid: 'u9', name: '', anon: true }),
+      }; window.GUNBAN_OMR_KICK = 'https://kick.test/'; Object.assign(window.GUNBAN_CLOUD_BACKEND, {
         set: async (path, obj, merge) => { store.set(path, merge ? { ...(store.get(path) || {}), ...JSON.parse(JSON.stringify(obj)) } : JSON.parse(JSON.stringify(obj))); },
         get: async (path) => (store.has(path) ? JSON.parse(JSON.stringify(store.get(path))) : null),
         list: async (col, opt = {}) => { const depth = col.split('/').length + 1; let out = [...store.entries()].filter(([k]) => k.startsWith(col + '/') && k.split('/').length === depth).map(([k, v]) => ({ id: k.split('/').pop(), ...v })); if (opt.orderBy) out.sort((a, b) => (opt.dir === 'asc' ? 1 : -1) * ((a[opt.orderBy] || 0) - (b[opt.orderBy] || 0))); return opt.limit ? out.slice(0, opt.limit) : out; },
         del: async (path) => { store.delete(path); }, newId: () => 'j' + (++n),
-      };
+      });
     };
     const { p, errs } = await openPage(browser, { mockAI: mock });
+    let kicks = 0; await p.route('https://kick.test/**', (r) => { if (r.request().method() === 'POST') kicks++; r.fulfill({ status: 200, headers: { 'access-control-allow-origin': '*' }, contentType: 'application/json', body: '{"ok":true}' }); });
     await p.setInputFiles('#fileInput', FIX('synthetic_page.png')); await p.waitForTimeout(800);
     const q = await p.evaluate(() => { const ks = [...window.__store.keys()]; return { modal: !document.querySelector('#aiModal').hidden, job: window.__store.get('users/u9/omrJobs/j1'), queue: window.__store.get('omrQueue/j1'), chunk: ks.filter((k) => k.startsWith('users/u9/omrJobs/j1/chunks/')).length, chip: document.querySelector('#omrChip').hidden ? '' : document.querySelector('#omrChipText').textContent, saved: localStorage.getItem('gunban-navi-v1:omrJob') }; });
     ok('파일만 올리면 안내 창 없이 바로 변환 요청(임시 계정)', !q.modal && q.job && q.job.status === 'queued' && q.queue && q.queue.uid === 'u9' && q.chunk === 1, JSON.stringify({ modal: q.modal, chip: q.chip }));
-    ok('화면 위에 진행 상황 표시 + 새로고침 대비 기억', /기다리는 중/.test(q.chip) && /j1/.test(q.saved || ''), q.chip);
+    ok('올리자마자 변환 바로 시작 요청(중계기)', kicks === 1, String(kicks));
+    ok('화면 위에 진행 상황 표시 + 새로고침 대비 기억', /준비 중.*1~2분/.test(q.chip) && /j1/.test(q.saved || ''), q.chip);
     ok('임시 계정이면 구글 로그인 버튼은 계속 보임', await p.evaluate(() => !document.querySelector('#loginBtn').hidden && !document.querySelector('#libBtn').hidden));
     // 변환 서버(omr/worker.py)가 하는 일을 흉내 낸다
     await p.evaluate(async () => {
