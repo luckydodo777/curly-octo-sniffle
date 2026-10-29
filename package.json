@@ -1,0 +1,10 @@
+{
+  "name": "gunban-navi",
+  "private": true,
+  "description": "건반 내비 — 악보를 올리면 칠 건반을 보여주는 초보자용 피아노 연습 앱",
+  "scripts": {
+    "build": "python build.py",
+    "test": "python build.py && node tests/run_all.js"
+  },
+  "devDependencies": { "playwright": "^1.48.0" }
+}

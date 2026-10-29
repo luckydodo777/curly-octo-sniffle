@@ -1,0 +1,183 @@
+<title>건반 내비</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gowun+Batang:wght@700&family=IBM+Plex+Mono:wght@500&family=IBM+Plex+Sans+KR:wght@400;500;600&display=swap">
+<style>
+/* @@STYLE: src/styles.css 가 여기에 들어감 */
+</style>
+
+<div class="app" id="app">
+  <header class="top">
+    <div class="brand" aria-label="건반 내비">
+      <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><b style="left:4px"></b><b style="left:10px"></b><b style="left:22px"></b></span>
+      건반 내비
+    </div>
+    <div class="song">
+      <div class="song-title" id="songTitle">악보를 불러오는 중…</div>
+      <div class="song-meta" id="songMeta"></div>
+    </div>
+    <div class="top-actions">
+      <button class="btn primary" id="openBtn" type="button" title="MusicXML, MXL, MIDI, PDF, 사진"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg><span>악보 올리기</span></button>
+      <button class="btn" id="demoBtn" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 18V5l11-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/></svg><span>예제 곡</span></button>
+      <button class="btn" id="saveXmlBtn" type="button" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v12M7 11l5 5 5-5"/><path d="M4 20h16"/></svg><span>MusicXML 저장</span></button>
+      <button class="btn only-mobile" id="panelBtn" type="button" aria-controls="side"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg><span>설정</span></button>
+      <input type="file" id="fileInput" hidden accept=".musicxml,.xml,.mxl,.mid,.midi,.pdf,image/*,application/vnd.recordare.musicxml+xml,audio/midi">
+    </div>
+  </header>
+
+  <main class="main">
+    <section class="score-pane" id="scorePane" aria-label="악보">
+      <div class="score-banner" id="aiBanner" hidden>
+        <b>AI가 읽은 초안이에요.</b> 원본과 마디별로 비교해 보세요. 틀린 음이 있을 수 있어요.
+        <button class="btn small" id="origBtn" type="button">원본 보기</button>
+        <button class="btn small" id="recheckBtn" type="button" title="이상하게 들리는 마디에서 누르면, 그 줄을 원본 그림과 다시 비교해서 고쳐요">지금 마디 다시 확인</button>
+        <div id="flagList" style="display:flex;flex-direction:column;gap:4px;width:100%" hidden></div>
+      </div>
+      <div class="score-scroll" id="scoreScroll">
+        <div id="osmd"></div>
+        <div class="score-note" id="scoreNote">악보를 그리는 중…</div>
+        <div class="orig-view" id="origView" hidden></div>
+      </div>
+    </section>
+    <section class="stage" id="stage" aria-label="떨어지는 음표와 건반">
+      <canvas id="fall" aria-label="떨어지는 음표. 위아래로 끌어서 위치를 옮길 수 있어요"></canvas>
+      <canvas id="keys" aria-label="피아노 건반. 눌러서 연주할 수 있어요"></canvas>
+      <div class="hint-keys" id="hintKeys">PC 키보드: A~K = 도~도 · Z/X 옥타브 · Space 재생</div>
+      <div class="prompt" id="prompt" hidden></div>
+      <div class="countdown" id="countdown" hidden></div>
+      <div class="toast" id="toast" hidden></div>
+    </section>
+  </main>
+
+  <nav class="bar" aria-label="재생 조작">
+    <div class="group">
+      <button class="icon-btn" id="restartBtn" type="button" title="처음으로 (Home)" aria-label="처음으로"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 5h2v14H6zM20 5v14L9 12z"/></svg></button>
+      <button class="icon-btn" id="prevBtn" type="button" title="이전 마디 (←)" aria-label="이전 마디"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg></button>
+      <button class="icon-btn play" id="playBtn" type="button" title="재생/일시정지 (Space)" aria-label="재생"><svg id="playIcon" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></button>
+      <button class="icon-btn" id="nextBtn" type="button" title="다음 마디 (→)" aria-label="다음 마디"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg></button>
+    </div>
+    <div class="readout" id="measureReadout">마디 <b>1</b> / 1</div>
+    <span class="sep"></span>
+    <div class="speed">
+      <span class="readout">속도</span>
+      <input type="range" id="speed" min="25" max="150" step="5" value="100" aria-label="연주 속도">
+      <span class="readout" id="speedReadout"><b>100%</b></span>
+    </div>
+    <span class="sep"></span>
+    <div class="seg" role="group" aria-label="연습 방식">
+      <button type="button" data-mode="listen" aria-pressed="true">듣기</button>
+      <button type="button" data-mode="wait" aria-pressed="false">따라치기</button>
+    </div>
+    <div class="seg" role="group" aria-label="연습할 손">
+      <button type="button" data-hands="both" aria-pressed="true">양손</button>
+      <button type="button" data-hands="R" aria-pressed="false">오른손</button>
+      <button type="button" data-hands="L" aria-pressed="false">왼손</button>
+    </div>
+    <button class="icon-btn" id="loopBtn" type="button" title="구간 반복 (L)" aria-label="구간 반복" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 2l3 3-3 3"/><path d="M4 11V9a4 4 0 0 1 4-4h12"/><path d="M7 22l-3-3 3-3"/><path d="M20 13v2a4 4 0 0 1-4 4H4"/></svg></button>
+    <button class="icon-btn" id="metroBtn" type="button" title="메트로놈 (M)" aria-label="메트로놈" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6l4 18H5z"/><path d="M12 16l5-9"/></svg></button>
+  </nav>
+
+  <aside class="side" id="side" aria-label="설정">
+    <div class="side-head"><b>연습 설정</b><button class="btn small" id="closePanel" type="button">닫기</button></div>
+
+    <div class="sec" id="statSec">
+      <h3>이번 연습</h3>
+      <div class="stat">
+        <div><b id="stAcc">–</b><span>정확도</span></div>
+        <div><b id="stMiss">0</b><span>틀린 음</span></div>
+        <div><b id="stLoops">0</b><span>반복</span></div>
+      </div>
+      <div class="status" id="modeHelp">듣기: 곡을 들으며 어떤 건반을 누르는지 봐요.</div>
+    </div>
+
+    <div class="sec">
+      <h3>빠르기 (메트로놈 표시)</h3>
+      <div class="status">악보에 적힌 ♩= 숫자와 다르면 고쳐 주세요. 재생·따라치기·메트로놈이 모두 이 빠르기를 따라요.</div>
+      <div id="tempoList" style="display:flex;flex-direction:column;gap:6px"></div>
+      <div class="row"><label for="steadyTempo">빠르기 변화 무시하고 일정하게<div class="sub">처음 빠르기로 끝까지 연습해요</div></label><span class="switch"><input type="checkbox" id="steadyTempo"></span></div>
+    </div>
+
+    <div class="sec">
+      <h3>구간 반복</h3>
+      <div class="row"><label for="loopOn">반복 켜기</label><span class="switch"><input type="checkbox" id="loopOn"></span></div>
+      <div class="row"><span>마디</span><span><input class="num" id="loopA" type="number" min="1" value="1" aria-label="시작 마디"> ~ <input class="num" id="loopB" type="number" min="1" value="4" aria-label="끝 마디"></span></div>
+      <div class="row" style="justify-content:flex-start;flex-wrap:wrap;gap:6px">
+        <button class="btn small" id="loopHere" type="button">지금 마디만</button>
+        <button class="btn small" id="loopHere2" type="button">지금부터 2마디</button>
+        <button class="btn small" id="loopAll" type="button">곡 전체</button>
+      </div>
+      <div class="row"><label for="autoSpeed">틀리지 않으면 속도 +5%<div class="sub">따라치기에서 한 바퀴를 완벽하게 치면 올라가요 (100%까지)</div></label><span class="switch"><input type="checkbox" id="autoSpeed"></span></div>
+    </div>
+
+    <div class="sec">
+      <h3>소리</h3>
+      <div class="row"><span>피아노 소리<div class="sub" id="soundSub">야마하 C5 그랜드 실제 녹음</div></span>
+        <select id="soundSel" aria-label="피아노 소리"><option value="sal">그랜드 피아노</option><option value="key">88건반 개별 녹음</option></select></div>
+      <div class="row"><label for="accomp">반대 손 반주<div class="sub">한 손 연습 때 다른 손을 대신 쳐 줘요</div></label><span class="switch"><input type="checkbox" id="accomp" checked></span></div>
+      <div class="row"><label for="guide">따라치기에서 내 파트도 들려주기</label><span class="switch"><input type="checkbox" id="guide"></span></div>
+      <div class="row"><label for="countIn">시작 전 준비 박자</label><span class="switch"><input type="checkbox" id="countIn" checked></span></div>
+      <div class="row"><label for="inputSound">내가 누른 음 소리 내기<div class="sub">전자피아노를 연결했다면 꺼 두세요</div></label><span class="switch"><input type="checkbox" id="inputSound" checked></span></div>
+      <div class="row"><label for="volume">음량</label><input type="range" id="volume" min="0" max="100" value="80" style="width:120px;accent-color:var(--accent)"></div>
+    </div>
+
+    <div class="sec">
+      <h3>보기</h3>
+      <div class="row"><span>화면</span>
+        <select id="viewSel" aria-label="화면 구성"><option value="all">악보 + 건반</option><option value="keys">건반만 크게</option><option value="score">악보 + 건반(노트 없이)</option></select></div>
+      <div class="row"><span>음 이름</span>
+        <select id="labelSel" aria-label="음 이름 표시"><option value="sol">도레미</option><option value="abc">C D E</option><option value="off">끄기</option></select></div>
+      <div class="row"><label for="fingers">손가락 번호 (악보에 있으면)</label><span class="switch"><input type="checkbox" id="fingers" checked></span></div>
+      <div class="row"><span>건반 범위</span>
+        <select id="rangeSel" aria-label="건반 범위"><option value="fit">곡에 맞춤</option><option value="61">61건반</option><option value="88">88건반</option></select></div>
+      <div class="row"><label for="zoom">노트 간격</label><input type="range" id="zoom" min="50" max="220" value="100" style="width:120px;accent-color:var(--accent)"></div>
+      <div class="row"><label for="scoreZoom">악보 크기</label><input type="range" id="scoreZoom" min="50" max="140" value="80" style="width:120px;accent-color:var(--accent)"></div>
+    </div>
+
+    <div class="sec">
+      <h3>입력 장치</h3>
+      <div class="row"><span>전자피아노 (MIDI)<div class="status" id="midiStatus">연결 안 됨</div></span><button class="btn small" id="midiBtn" type="button">연결</button></div>
+      <div class="row"><span>마이크 (베타)<div class="status" id="micStatus">한 번에 한 음만 알아들어요</div></span><button class="btn small" id="micBtn" type="button">켜기</button></div>
+      <div class="status">PC 키보드: <span class="kbd">A</span><span class="kbd">S</span><span class="kbd">D</span>… = 흰건반, <span class="kbd">W</span><span class="kbd">E</span><span class="kbd">T</span>… = 검은건반, <span class="kbd">Z</span>/<span class="kbd">X</span> 옥타브 이동 (지금 <b id="octLabel">도4</b>부터)</div>
+    </div>
+
+    <div class="sec">
+      <h3>처음 쓰는 분께</h3>
+      <ol class="steps">
+        <li><b>듣기</b>로 한 번 들으면서 떨어지는 음표가 어느 건반에 닿는지 봐요.</li>
+        <li>속도를 <b>50%</b>로 낮추고 <b>오른손</b>만, <b>따라치기</b>를 켜요. 맞는 건반을 누를 때까지 기다려 줘요.</li>
+        <li>어려운 곳은 <b>구간 반복</b>으로 2마디씩 연습하고, 익숙해지면 양손으로 합쳐요.</li>
+      </ol>
+    </div>
+
+    <div class="sec">
+      <h3>어떤 악보를 올릴 수 있나요</h3>
+      <ul class="help">
+        <li><b>MusicXML (.musicxml, .xml, .mxl)</b> — 가장 정확해요. MuseScore 같은 악보 프로그램에서 내보내기로 만들어요.</li>
+        <li><b>MIDI (.mid)</b> — 음표와 건반은 정확하지만 악보 그림은 없어요.</li>
+        <li><b>PDF·사진</b> — AI가 읽어서 초안을 만들어요(베타). 복잡한 곡은 틀릴 수 있어요. 정확하게 하려면 MuseScore 4에서 PDF 가져오기(악보 인식) 후 MusicXML로 내보내 올려 주세요.</li>
+      </ul>
+    </div>
+  </aside>
+</div>
+
+<div class="modal" id="aiModal" hidden>
+  <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="aiTitle">
+    <h2 id="aiTitle">PDF·사진 악보 읽기</h2>
+    <p id="aiDesc"></p>
+    <div class="thumbs" id="aiThumbs"></div>
+    <div class="row" id="aiVerifyRow" hidden><label for="aiVerify">읽은 뒤 원본과 한 번 더 대조해서 고치기 (권장)<div class="sub">시간은 약 2배 걸리지만 박자·화음 오류가 크게 줄어요</div></label><span class="switch"><input type="checkbox" id="aiVerify" checked></span></div>
+    <div class="progress" id="aiProg" hidden><i></i></div>
+    <div class="status" id="aiStatus"></div>
+    <div class="dialog-actions">
+      <button class="btn" id="aiCancel" type="button">닫기</button>
+      <button class="btn primary" id="aiGo" type="button">AI로 악보 읽기</button>
+    </div>
+  </div>
+</div>
+<div class="drop" id="drop" hidden>여기에 악보 파일을 놓으세요</div>
+
+<script type="application/json" id="pianoSamples">/* @@SAMPLES: assets/piano_samples.json */</script>
+<script>
+/* @@SCRIPT: src/app.js */
+</script>

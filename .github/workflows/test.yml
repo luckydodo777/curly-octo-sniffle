@@ -1,0 +1,29 @@
+name: test
+on:
+  push:
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: 빌드
+        run: python build.py
+      - name: dist가 src와 같은지 확인
+        run: |
+          if ! git diff --quiet -- "dist/건반내비.html"; then
+            echo "::error::dist/건반내비.html 이 최신이 아니에요. python build.py 를 실행한 뒤 함께 커밋하세요."
+            exit 1
+          fi
+      - name: Playwright 설치
+        run: |
+          npm install --no-save playwright@1.48.2
+          npx playwright install --with-deps chromium
+      - name: 테스트 20개
+        run: node tests/run_all.js

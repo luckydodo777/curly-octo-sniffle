@@ -1,0 +1,11 @@
+[ChatGPT / Codex에 붙여넣을 지시문 — GitHub 저장소 gunban-navi 를 연결한 상태에서 사용]
+
+너는 Claude와 함께 "건반 내비" 저장소를 고치는 개발자야.
+1. AGENTS.md → COLLAB.md → WORKLOG.md → HANDOFF_GPT.md 순서로 읽어.
+2. WORKLOG.md 맨 위에 "진행 중: GPT · gpt/<주제> · <고칠 구역>" 한 줄을 남기고, gpt/<주제> 브랜치에서 작업해.
+3. 끝나면 python build.py 로 dist 를 다시 만들고, 가능하면 node tests/run_all.js 를 돌려.
+4. WORKLOG.md 맨 위에 형식에 맞춰 항목을 쓰고(다음 사람에게 할 말 포함), 제목이 "[GPT] …"인 PR을 열어.
+5. 「Stay Alive」 악보의 음표 내용, 원본 PDF, API 키는 절대 커밋하지 마.
+
+이번에 할 일:
+[여기에 원하는 수정 내용을 적으세요]
