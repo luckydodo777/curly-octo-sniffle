@@ -156,6 +156,39 @@ async function openPage(browser, opts = {}) {
     ok('로그인 상태 모바일(400px) 가로 넘침 없음', !(await p.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)));
     ok('페이지 오류 없음', errs.length === 0, errs.join(' | ')); await p.close(); }
 
+
+  // 8) 무료 자동 변환(Audiveris) 요청 흐름 — AI 없음, 로그인 상태
+  { const mock = () => {
+      const store = new Map(); window.__store = store; let cb = null; let n = 0;
+      window.GUNBAN_CLOUD_BACKEND = {
+        onAuth: (f) => { cb = f; setTimeout(() => f(null), 0); }, signIn: async () => cb({ uid: 'u9', name: '사용자' }), signOut: async () => cb(null),
+        set: async (path, obj, merge) => { store.set(path, merge ? { ...(store.get(path) || {}), ...JSON.parse(JSON.stringify(obj)) } : JSON.parse(JSON.stringify(obj))); },
+        get: async (path) => (store.has(path) ? JSON.parse(JSON.stringify(store.get(path))) : null),
+        list: async (col, opt = {}) => { const depth = col.split('/').length + 1; let out = [...store.entries()].filter(([k]) => k.startsWith(col + '/') && k.split('/').length === depth).map(([k, v]) => ({ id: k.split('/').pop(), ...v })); if (opt.orderBy) out.sort((a, b) => (opt.dir === 'asc' ? 1 : -1) * ((a[opt.orderBy] || 0) - (b[opt.orderBy] || 0))); return opt.limit ? out.slice(0, opt.limit) : out; },
+        del: async (path) => { store.delete(path); }, newId: () => 'j' + (++n),
+      };
+    };
+    const { p, errs } = await openPage(browser, { mockAI: mock });
+    await p.setInputFiles('#fileInput', FIX('synthetic_page.png')); await p.waitForTimeout(400);
+    ok('로그인 전: PDF·사진을 올리면 로그인 후 무료 변환 안내', await p.evaluate(() => !document.querySelector('#aiModal').hidden && /로그인/.test(document.querySelector('#aiGo').textContent)));
+    await p.click('#aiGo'); await p.waitForTimeout(700);
+    await p.click('#aiGo'); await p.waitForTimeout(600);
+    const q = await p.evaluate(() => { const ks = [...window.__store.keys()]; return { job: window.__store.get('users/u9/omrJobs/j1'), queue: window.__store.get('omrQueue/j1'), chunk: ks.filter((k) => k.startsWith('users/u9/omrJobs/j1/chunks/')).length, msg: document.querySelector('#aiStatus').textContent }; });
+    ok('무료 변환 요청: 원본 업로드 + 대기열 등록', q.job && q.job.status === 'queued' && q.queue && q.queue.uid === 'u9' && q.chunk === 1, q.msg);
+    // 변환 서버(omr/worker.py)가 하는 일을 흉내 낸다
+    await p.evaluate(async () => {
+      const xml = jsonToMusicXML({ title: '변환곡', time: [4, 4], measures: [{ rh: [{ p: 'C5', d: 'w' }], lh: [{ p: 'C3', d: 'w' }] }, { rh: [{ p: 'D5', d: 'w' }], lh: [{ p: 'G2', d: 'w' }] }] });
+      const s = window.__store; s.set('users/u9/songs/s1/chunks/xml_0', { field: 'xml', i: 0, data: xml });
+      s.set('users/u9/songs/s1', { title: '변환곡', kind: 'omr', name: 'synthetic_page.png', measures: 2, createdAt: Date.now(), updatedAt: Date.now(), flags: [], fixed: [], tempos: [], big: { xml: 1 }, original: null, stats: { sessions: 0 } });
+      s.set('users/u9/omrJobs/j1', { ...s.get('users/u9/omrJobs/j1'), status: 'done', songId: 's1', finishedAt: Date.now(), info: { measures: 2, seconds: 14 } }); s.delete('omrQueue/j1');
+    });
+    await p.click('#aiGo'); await p.waitForTimeout(800);
+    const j = await p.evaluate(() => ({ jobs: [...document.querySelectorAll('#jobList .lib-item')].map((x) => x.innerText.replace(/\s+/g, ' ')), songs: document.querySelectorAll('#libList .lib-item').length }));
+    ok('내 악보함에 변환 상태(완료)와 결과 곡이 보임', j.jobs.length === 1 && /완료/.test(j.jobs[0]) && j.songs === 1, j.jobs[0]);
+    await p.click('#jobList button.primary'); await p.waitForTimeout(700);
+    ok('변환된 악보 열기', await p.evaluate(() => GunbanNavi.song.title === '변환곡' && current.kind === 'omr' && /빠르기/.test(document.querySelector('#toast').textContent)));
+    ok('페이지 오류 없음', errs.length === 0, errs.join(' | ')); await p.close(); }
+
   await browser.close();
   console.log(failed ? `\n${failed}개 실패` : '\n모두 통과'); process.exit(failed ? 1 : 0);
 })();

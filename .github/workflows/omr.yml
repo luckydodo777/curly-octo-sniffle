@@ -1,0 +1,52 @@
+name: omr
+# 앱에서 올린 PDF·사진을 Audiveris로 MusicXML로 바꿔 "내 악보함"에 넣는다 (Claude/GPT 토큰 사용 없음).
+# 5분마다 대기열을 확인하고, 일이 없으면 몇 초 만에 끝난다. 앱의 "지금 변환" 링크로 바로 실행할 수도 있다.
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+concurrency:
+  group: omr
+  cancel-in-progress: false
+jobs:
+  convert:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+    steps:
+      - name: 비밀값 확인
+        id: sa
+        run: |
+          if [ -z "$FIREBASE_SERVICE_ACCOUNT" ]; then echo "FIREBASE_SERVICE_ACCOUNT 가 없어 건너뜀 (docs/FIREBASE_SETUP.md 8단계)"; echo "ok=no" >> "$GITHUB_OUTPUT"; else echo "ok=yes" >> "$GITHUB_OUTPUT"; fi
+      - uses: actions/checkout@v4
+        if: steps.sa.outputs.ok == 'yes'
+      - uses: actions/setup-python@v5
+        if: steps.sa.outputs.ok == 'yes'
+        with:
+          python-version: "3.12"
+      - name: 대기열 확인
+        id: q
+        if: steps.sa.outputs.ok == 'yes'
+        run: |
+          pip install -q firebase-admin
+          set +e; python omr/worker.py --check; c=$?; set -e
+          if [ $c -eq 0 ]; then echo "has=yes" >> "$GITHUB_OUTPUT"; elif [ $c -eq 10 ]; then echo "has=no" >> "$GITHUB_OUTPUT"; else exit $c; fi
+      - name: Audiveris 준비 (캐시)
+        if: steps.q.outputs.has == 'yes'
+        uses: actions/cache@v4
+        with:
+          path: /tmp/aud
+          key: audiveris-5.11.0-ubuntu24.04
+      - name: Audiveris 설치
+        if: steps.q.outputs.has == 'yes'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p /tmp/aud /tmp/audx
+          ls /tmp/aud/*.deb >/dev/null 2>&1 || gh release download 5.11.0 -R Audiveris/audiveris --pattern '*ubuntu24.04*.deb' -D /tmp/aud
+          dpkg-deb -x /tmp/aud/*.deb /tmp/audx
+          sudo apt-get install -y -q xvfb >/dev/null
+      - name: 변환
+        if: steps.q.outputs.has == 'yes'
+        run: python omr/worker.py --run --audiveris /tmp/audx/opt/audiveris/bin/Audiveris

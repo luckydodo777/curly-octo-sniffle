@@ -5,5 +5,9 @@ service cloud.firestore {
     match /users/{uid}/{document=**} {
       allow read, write: if request.auth != null && request.auth.uid == uid;
     }
+    // 무료 자동 변환 대기열: 자기 이름으로 등록만 할 수 있고, 읽기·수정은 변환 서버(관리자 권한)만 한다
+    match /omrQueue/{jobId} {
+      allow create: if request.auth != null && request.resource.data.uid == request.auth.uid;
+    }
   }
 }

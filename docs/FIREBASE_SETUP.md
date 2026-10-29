@@ -12,6 +12,15 @@
 6. 프로젝트 설정(톱니바퀴) → 일반 → 내 앱 → **웹(</>)** → 앱 닉네임 입력 → 앱 등록 → 나오는 `firebaseConfig`에서 `apiKey`, `authDomain`, `projectId`, `appId` 4개를 복사
 7. 그 4개를 `src/app.js` 의 `FIREBASE_CONFIG`에 넣고 `python build.py` → PR (Claude나 GPT에게 값만 알려 줘도 된다)
 
+8. (무료 자동 변환을 쓰려면) **서비스 계정 키를 GitHub 비밀값으로 등록**
+   - Firebase 프로젝트 설정(톱니) → **서비스 계정** → **새 비공개 키 생성** → JSON 파일이 내려받아짐
+   - GitHub 저장소 → Settings → Secrets and variables → **Actions** → **New repository secret**
+     - Name: `FIREBASE_SERVICE_ACCOUNT`
+     - Secret: 내려받은 JSON 파일 내용 전체를 붙여 넣기 → Add secret
+   - 이 키는 비밀번호와 같다. 채팅·저장소·코드에 절대 붙여 넣지 말고 GitHub 비밀값에만 넣는다. 다 넣었으면 내려받은 파일은 지운다.
+   - 9번 규칙도 꼭 다시 게시한다(변환 대기열 규칙이 추가됨).
+9. Firestore → 규칙 탭 → 저장소의 최신 `firestore.rules` 내용으로 바꾸고 **게시**
+
 참고
 - 웹 설정값(apiKey 등)은 비밀번호가 아니라서 공개 저장소에 있어도 된다. 데이터 보호는 5번 규칙이 한다.
 - 로그인은 GitHub Pages 주소에서만 동작한다. Claude 게시본과 내려받은 파일(file://)에서는 로그인 버튼이 숨겨진다.

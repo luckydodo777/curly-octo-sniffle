@@ -37,7 +37,7 @@ gunban-navi/
 ```bash
 python build.py                       # dist/건반내비.html 생성
 npm i playwright && npx playwright install chromium   # 처음 한 번
-node tests/run_all.js                 # 34개 테스트, "모두 통과"가 나와야 함
+node tests/run_all.js                 # 39개 테스트, "모두 통과"가 나와야 함
 ```
 - 테스트는 외부 네트워크를 막고 돌린다. 그래서 **악보 그림(OSMD)과 PDF 읽기(pdf.js)는 테스트에서 빠진다** (둘 다 CDN 필요).
 - AI 기능은 `window.GUNBAN_AI_ADAPTER` 가짜 구현으로 시험한다 (아래 6장).
@@ -75,6 +75,13 @@ node tests/run_all.js                 # 34개 테스트, "모두 통과"가 나�
 - 연습 기록: 재생 시작~멈춤 한 번이 `Practice` → `Library.logSession`으로 `sessions/`에 저장(정확도, 틀린 음, 속도, 마디 범위, 시간), 곡 문서 `stats`에 요약.
 - 테스트는 `window.GUNBAN_CLOUD_BACKEND`(메모리 가짜 저장소)로 돌린다. 백엔드 인터페이스: `onAuth, signIn, signOut, set(path,obj,merge), get(path), list(col,{orderBy,dir,limit}), del(path), newId(col)`.
 - 보안 규칙: 저장소 루트 `firestore.rules`.
+
+## 4-3. 무료 자동 변환 (토큰 없는 OMR)
+- PDF·사진 → MusicXML 을 오픈소스 **Audiveris 5.11.0** 으로 변환한다. AI 토큰을 쓰지 않는다.
+- 흐름: 앱(로그인)에서 요청 → `users/{uid}/omrJobs/{id}`(원본 chunks) + `omrQueue/{id}` → GitHub Actions `omr.yml`(5분마다, 또는 수동 Run) → `omr/worker.py --run` → `users/{uid}/songs/{새 id}`(kind "omr")에 저장 → 작업 상태 done/failed.
+- 필요한 비밀값: `FIREBASE_SERVICE_ACCOUNT` (docs/FIREBASE_SETUP.md 8단계). 없으면 워크플로가 조용히 건너뛴다.
+- 회귀 시험: `omr-test.yml` 이 `omr/test/*.musicxml`(공개 예제·직접 만든 연습곡)을 PDF로 만들어 다시 읽고, 앱 파서로 음 단위 100% 일치를 확인한다(`tests/omr_compare.js`).
+- 알려진 한계: 빠르기표(♩=)를 읽지 못함 → 앱이 열 때 빠르기 수정을 안내. 손가락 번호 "3"을 셋잇단으로 오인할 수 있음. 공개 저장소라 Actions 로그는 공개 → 워커는 파일 이름·내용을 로그에 남기지 않는다.
 
 ## 5. 지켜야 할 제약
 1. **한 파일 HTML 유지.** 외부 스크립트는 CDN에서만: OSMD `opensheetmusicdisplay@1.8.9` (jsDelivr), pdf.js `3.11.174` (cdnjs). 버전은 고정. Claude 아티팩트로 다시 게시할 경우 CSP 때문에 **스크립트 이외의 외부 요청(fetch·이미지·오디오)은 막힌다** → 샘플·데이터는 파일 안에 넣어야 한다.
