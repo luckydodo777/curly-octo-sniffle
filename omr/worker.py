@@ -11,7 +11,7 @@
 
 사용
   python omr/worker.py --check            # 대기 작업이 있으면 종료코드 0, 없으면 10 (설치 생략용)
-  python omr/worker.py --run --audiveris /path/to/Audiveris
+  python omr/worker.py --run --audiveris /path/to/Audiveris [--linger 600]
   python omr/worker.py --local IN_DIR OUT_DIR --audiveris BIN   # Firebase 없이 변환만 (시험용)
 
 환경변수: FIREBASE_SERVICE_ACCOUNT (서비스 계정 JSON 전체 문자열)
@@ -92,10 +92,24 @@ def get_big(db, base, field, n):
 
 def run_mode(args):
     db = firestore()
-    queue = list(db.collection("omrQueue").order_by("createdAt").limit(10).stream())
     if args.check:
+        queue = list(db.collection("omrQueue").order_by("createdAt").limit(10).stream())
         print(f"대기 작업 {len(queue)}개")
         return 0 if queue else 10
+    # --linger N: 처리 후에도 N초 동안 새 작업을 기다려 바로 처리 (Audiveris 설치를 다시 하지 않아 빠름)
+    until = time.time() + max(0, args.linger)
+    total = 0
+    while True:
+        total += process_queue(db, args)
+        if time.time() >= until:
+            break
+        time.sleep(20)
+    print(f"이번 실행에서 처리 {total}개")
+    return 0
+
+
+def process_queue(db, args):
+    queue = list(db.collection("omrQueue").order_by("createdAt").limit(10).stream())
     done = 0
     for q in queue:
         qd = q.to_dict() or {}
@@ -143,8 +157,9 @@ def run_mode(args):
             job_ref.set({"status": "failed", "error": msg, "finishedAt": int(time.time() * 1000)}, merge=True)
             print(f"[{job_id}] 실패: {msg}")
         q.reference.delete()
-    print(f"처리 {len(queue)}개, 성공 {done}개")
-    return 0
+    if queue:
+        print(f"처리 {len(queue)}개, 성공 {done}개")
+    return len(queue)
 
 
 if __name__ == "__main__":
@@ -152,6 +167,7 @@ if __name__ == "__main__":
     ap.add_argument("--audiveris", default=os.environ.get("AUDIVERIS_BIN", "audiveris"))
     ap.add_argument("--check", action="store_true")
     ap.add_argument("--run", action="store_true")
+    ap.add_argument("--linger", type=int, default=0, help="처리 후 새 작업을 기다릴 초")
     ap.add_argument("--local", nargs=2, metavar=("IN_DIR", "OUT_DIR"))
     a = ap.parse_args()
     sys.exit(local_mode(a) if a.local else run_mode(a))
