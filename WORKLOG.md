@@ -4,6 +4,10 @@ Claude와 GPT가 서로에게 전달할 내용을 여기에 남긴다. 형식은
 
 ---
 
+## 2026-10-30 · Claude · claude/kick-url
+- 바꾼 것: OMR_KICK_URL 에 사용자가 만든 Cloudflare 중계기 주소(gunban-kick.znznzn4105.workers.dev)를 넣음 → 업로드 즉시 omr.yml 실행.
+- 테스트: run_all 통과.
+
 ## 2026-10-30 · Claude · claude/omr-server (추가)
 - 확인: Hugging Face Docker Space는 2026년 여름부터 PRO(유료) 필요 → 무료 기본 경로를 바꿈.
 - 바꾼 것: 무료 즉시 실행 중계기(relay/kick-worker.js, Cloudflare Workers 무료). 앱이 대기열에 올린 직후 OMR_KICK_URL 로 POST → omr.yml workflow_dispatch → 1~2분 안에 결과. 진행 표시 4초 간격 확인. omr.yml: pip 캐시, xvfb 있으면 설치 생략. worker --linger 확인 간격 20초→5초. HF 서버(OMR_SERVER_URL)는 유료 선택지로 남김.
