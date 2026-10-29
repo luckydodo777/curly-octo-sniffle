@@ -1306,7 +1306,7 @@ const FIREBASE_VERSION = "10.12.2";
 // 악보 변환 서버(Audiveris, Hugging Face Space). 비어 있으면 예전 방식(대기열 + GitHub Actions)을 쓴다. docs/OMR_SERVER.md
 const OMR_SERVER_URL = "";
 // 무료 즉시 시작 중계기(Cloudflare Worker): 올리자마자 GitHub 변환을 바로 실행시킨다. 비어 있으면 5분 예약 실행을 기다림. docs/OMR_FAST.md
-const OMR_KICK_URL = "";
+const OMR_KICK_URL = "https://gunban-kick.znznzn4105.workers.dev/";
 const omrKick = () => (window.GUNBAN_OMR_KICK || OMR_KICK_URL || "");
 const omrServer = () => (window.GUNBAN_OMR_SERVER || OMR_SERVER_URL || "").replace(/\/+$/, "");
 const CLOUD_CHUNK = 300000; // 문서 하나 1MB 제한 → 큰 글자 데이터는 30만 자씩 나눠 저장
