@@ -37,7 +37,7 @@ gunban-navi/
 ```bash
 python build.py                       # dist/건반내비.html 생성
 npm i playwright && npx playwright install chromium   # 처음 한 번
-node tests/run_all.js                 # 20개 테스트, "모두 통과"가 나와야 함
+node tests/run_all.js                 # 34개 테스트, "모두 통과"가 나와야 함
 ```
 - 테스트는 외부 네트워크를 막고 돌린다. 그래서 **악보 그림(OSMD)과 PDF 읽기(pdf.js)는 테스트에서 빠진다** (둘 다 CDN 필요).
 - AI 기능은 `window.GUNBAN_AI_ADAPTER` 가짜 구현으로 시험한다 (아래 6장).
@@ -68,6 +68,13 @@ node tests/run_all.js                 # 20개 테스트, "모두 통과"가 나�
 - **AI JSON(악보 한 마디):** `{ rh:[ev], lh:[ev], rh2?, lh2?, time?:[b,bt], fifths?, bpm?, rhClef?:"G"|"F", lhClef?, rh8va?:1|-1, lh8va? }`
   - `ev = { p:"E4" | ["C4","E4"] | "r", d:"q"|"h."|"e3"|"s", tup?:[5,4], f?:3, tie?:true }`
   - 음높이는 **적힌 음(written pitch)**, 8va는 `rh8va`로 따로. 임시표는 마디 끝까지 유지된 결과를 적는다.
+
+## 4-2. 계정·내 악보함 (app.js "14-2" 구역)
+- 구글 로그인(Firebase Auth) + Firestore. `FIREBASE_CONFIG`가 비어 있으면 기능이 숨겨진다. 설정법은 `docs/FIREBASE_SETUP.md`.
+- 로그인한 상태에서 곡을 열면 `Library.autoSave`가 자동 저장(악보 XML, MIDI, AI 판독 JSON, 원본 PDF·사진 ≤6MB, 빠르기 수정, 확인필요 마디). 큰 글자 데이터는 30만 자씩 `chunks/`에 나눠 저장.
+- 연습 기록: 재생 시작~멈춤 한 번이 `Practice` → `Library.logSession`으로 `sessions/`에 저장(정확도, 틀린 음, 속도, 마디 범위, 시간), 곡 문서 `stats`에 요약.
+- 테스트는 `window.GUNBAN_CLOUD_BACKEND`(메모리 가짜 저장소)로 돌린다. 백엔드 인터페이스: `onAuth, signIn, signOut, set(path,obj,merge), get(path), list(col,{orderBy,dir,limit}), del(path), newId(col)`.
+- 보안 규칙: 저장소 루트 `firestore.rules`.
 
 ## 5. 지켜야 할 제약
 1. **한 파일 HTML 유지.** 외부 스크립트는 CDN에서만: OSMD `opensheetmusicdisplay@1.8.9` (jsDelivr), pdf.js `3.11.174` (cdnjs). 버전은 고정. Claude 아티팩트로 다시 게시할 경우 CSP 때문에 **스크립트 이외의 외부 요청(fetch·이미지·오디오)은 막힌다** → 샘플·데이터는 파일 안에 넣어야 한다.

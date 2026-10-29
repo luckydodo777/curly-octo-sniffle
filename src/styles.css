@@ -152,3 +152,15 @@ ol.steps b{color:var(--ink)}
   .bar{gap:7px;padding:7px}
 }
 @media (prefers-reduced-motion: reduce){ *{transition:none!important;animation:none!important} }
+.account{display:inline-flex;gap:8px}
+.account small{color:var(--muted);font-size:11.5px}
+.lib{width:min(680px,100%)}
+.lib-head{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.lib-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+.lib-item{border:1px solid var(--line);border-radius:10px;padding:10px 12px;display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;background:var(--surface-2)}
+.lib-item.on{border-color:var(--accent)}
+.lib-info{flex:1 1 260px;min-width:0;display:flex;flex-direction:column;gap:2px}
+.lib-info b{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lib-acts{display:flex;gap:6px;flex-wrap:wrap}
+.lib-log{flex-basis:100%;font-size:12.5px;color:var(--muted);display:flex;flex-direction:column;gap:3px;max-height:180px;overflow:auto}
+.btn.danger{border-color:var(--bad);color:var(--bad)}

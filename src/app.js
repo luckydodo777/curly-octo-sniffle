@@ -637,11 +637,11 @@ function play() {
   const lr = loopRange();
   if (E.finished || E.pos >= song.duration - 0.01) seek(lr ? lr.start : 0);
   if (lr && (E.pos < lr.start - 0.01 || E.pos >= lr.end - 0.01)) seek(lr.start);
-  E.playing = true;
+  E.playing = true; Practice.start();
   if (settings.countIn) startCountIn();
   setPlayIcon();
 }
-function pause() { E.playing = false; E.countIn = 0; $("#countdown").hidden = true; setPlayIcon(); }
+function pause() { if (E.playing) Practice.flush(); E.playing = false; E.countIn = 0; $("#countdown").hidden = true; setPlayIcon(); }
 function togglePlay() { E.playing ? pause() : play(); }
 function startCountIn() {
   const m = song.measures[measureAt(E.pos)] || { beats: 4, beatType: 4 };
@@ -686,7 +686,7 @@ function advance(d) {
   E.pos = target;
   if (!E.waiting && E.pos >= end - 1e-6) {
     if (lr) { onLoopDone(); seek(lr.start, true); if (settings.countIn) startCountIn(); }
-    else { E.playing = false; E.finished = true; setPlayIcon(); toast(settings.mode === "wait" ? `끝까지 쳤어요! 정확도 ${accText()}` : "곡이 끝났어요. ▶를 누르면 처음부터 다시 들어요."); }
+    else { E.playing = false; E.finished = true; Practice.flush(); setPlayIcon(); toast(settings.mode === "wait" ? `끝까지 쳤어요! 정확도 ${accText()}` : "곡이 끝났어요. ▶를 누르면 처음부터 다시 들어요."); }
   }
 }
 function onLoopDone() {
@@ -1218,9 +1218,10 @@ function renderFlags() {
 }
 function setSong(raw, meta) {
   pause();
+  const prevCloudId = current && current.cloudId;
   if (meta.persist !== false && settings.loopOn && !meta.keepLoop) { settings.loopOn = false; $("#loopOn").checked = false; $("#loopBtn").setAttribute("aria-pressed", "false"); saveSettings(); }
   song = buildSong(raw, {});
-  current = { xml: meta.xml || null, kind: meta.kind, origImages: meta.origImages || [], name: meta.name || "", flags: meta.flags || [], report: meta.report || null, fixed: meta.fixed || [], raw, meta, ai: meta.ai || null };
+  current = { xml: meta.xml || null, kind: meta.kind, origImages: meta.origImages || [], name: meta.name || "", flags: meta.flags || [], report: meta.report || null, fixed: meta.fixed || [], raw, meta, ai: meta.ai || null, cloudId: meta.cloudId || (meta.sameSong ? prevCloudId : null) || null };
   song.flagged = new Map(); current.flags.forEach((f) => { if (f.m < song.measures.length) song.flagged.set(f.m, (song.flagged.get(f.m) || []).concat(f.issues)); });
   renderFlags(); renderTempos();
   $("#songTitle").textContent = song.title || meta.name || "제목 없는 악보";
@@ -1239,7 +1240,9 @@ function setSong(raw, meta) {
   computeRange(); setRate(settings.rate);
   seek(loopRange() ? loopRange().start : 0);
   Score.show(current.xml);
-  try { if (meta.persist !== false) localStorage.setItem(STORE_KEY + ":last", JSON.stringify({ kind: meta.kind, name: meta.name || "", xml: current.xml, midiB64: meta.midiB64 || null, flags: current.flags, report: current.report, fixed: current.fixed, ai: current.ai ? { json: current.ai.json, ranges: current.ai.ranges } : null })); } catch (e) {}
+  try { if (meta.persist !== false) localStorage.setItem(STORE_KEY + ":last", JSON.stringify({ kind: meta.kind, name: meta.name || "", xml: current.xml, midiB64: meta.midiB64 || null, flags: current.flags, report: current.report, fixed: current.fixed, ai: current.ai ? { json: current.ai.json, ranges: current.ai.ranges } : null, cloudId: current.cloudId })); } catch (e) {}
+  if (meta.persist !== false && meta.kind !== "demo" && !meta.fromLibrary) Library.autoSave(meta.file || null, !!meta.sameSong);
+  if ($("#libModal") && !$("#libModal").hidden) renderLibrary();
 }
 // 빠르기 표: 악보의 메트로놈 표시를 보여 주고 고칠 수 있게 한다
 function renderTempos() {
@@ -1261,6 +1264,7 @@ function rebuildTiming() {
   song = buildSong(current.raw, {}); song.flagged = flagged;
   setRate(settings.rate); seek(song.measures[mi] ? song.measures[mi].start : 0);
   try { const last = JSON.parse(localStorage.getItem(STORE_KEY + ":last") || "null"); if (last) { last.tempos = current.raw.tempos; localStorage.setItem(STORE_KEY + ":last", JSON.stringify(last)); } } catch (e) {}
+  Library.autoSave(null, true);
   if (wasPlaying) play();
 }
 function loadDemo() { const xml = jsonToMusicXML(ODE); setSong(parseMusicXML(xml), { kind: "demo", xml, name: "환희의 송가" }); }
@@ -1271,7 +1275,7 @@ async function openFile(file) {
   try {
     if (ext === "mid" || ext === "midi" || file.type === "audio/midi") {
       const buf = await file.arrayBuffer(); const raw = parseMIDI(buf); raw.title = name.replace(/\.[^.]+$/, "");
-      setSong(raw, { kind: "midi", name, midiB64: buf.byteLength < 400000 ? b64(buf) : null }); toast("MIDI를 불러왔어요"); return;
+      setSong(raw, { kind: "midi", name, midiB64: b64(buf) }); toast("MIDI를 불러왔어요"); return;
     }
     if (ext === "mxl") { const xml = await mxlToXml(await file.arrayBuffer()); setSong(parseMusicXML(xml), { kind: "musicxml", xml, name }); toast("악보를 불러왔어요"); return; }
     if (ext === "musicxml" || ext === "xml" || file.type.includes("xml")) { const xml = await file.text(); setSong(parseMusicXML(xml), { kind: "musicxml", xml, name }); toast("악보를 불러왔어요"); return; }
@@ -1290,6 +1294,197 @@ $("#saveXmlBtn").onclick = async () => {
   if (dl) { try { await dl.save({ filename: fname, data: current.xml }); } catch (e) { if (e && e.code !== "cancelled") toast("저장하지 못했어요."); } return; }
   const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([current.xml], { type: "application/xml" })); a.download = fname; document.body.appendChild(a); a.click(); a.remove();
 };
+
+/* ============================================================
+   14-2) 계정(구글 로그인) + 내 악보함 + 연습 기록 — Firebase
+   - FIREBASE_CONFIG 가 비어 있으면 이 기능은 숨겨진다.
+   - Firebase 웹 설정값은 비밀번호가 아니다(공개돼도 됨). 데이터 보호는 firestore.rules 가 맡는다.
+   - 저장 위치: users/{uid}/songs/{songId} (+ chunks/, sessions/)
+   ============================================================ */
+const FIREBASE_CONFIG = { apiKey: "", authDomain: "", projectId: "", appId: "" };
+const FIREBASE_VERSION = "10.12.2";
+const CLOUD_CHUNK = 300000; // 문서 하나 1MB 제한 → 큰 글자 데이터는 30만 자씩 나눠 저장
+async function firebaseBackend(cfg) {
+  const base = `https://www.gstatic.com/firebasejs/${FIREBASE_VERSION}/`;
+  const [fa, au, fs] = await Promise.all([import(base + "firebase-app.js"), import(base + "firebase-auth.js"), import(base + "firebase-firestore.js")]);
+  const app = fa.initializeApp(cfg); const auth = au.getAuth(app); const db = fs.getFirestore(app);
+  try { await au.getRedirectResult(auth); } catch (e) {}
+  return {
+    onAuth: (cb) => au.onAuthStateChanged(auth, (u) => cb(u ? { uid: u.uid, name: u.displayName || "", email: u.email || "", photo: u.photoURL || "" } : null)),
+    async signIn() {
+      const p = new au.GoogleAuthProvider(); p.setCustomParameters({ prompt: "select_account" }); // 매번 계정 고르기 창
+      try { await au.signInWithPopup(auth, p); }
+      catch (e) { if (e && (e.code === "auth/popup-blocked" || e.code === "auth/operation-not-supported-in-this-environment")) await au.signInWithRedirect(auth, p); else throw e; }
+    },
+    signOut: () => au.signOut(auth),
+    set: (path, obj, merge) => fs.setDoc(fs.doc(db, path), obj, { merge: !!merge }),
+    async get(path) { const s = await fs.getDoc(fs.doc(db, path)); return s.exists() ? s.data() : null; },
+    async list(col, opt = {}) {
+      const parts = []; if (opt.orderBy) parts.push(fs.orderBy(opt.orderBy, opt.dir || "desc")); if (opt.limit) parts.push(fs.limit(opt.limit));
+      const ref = fs.collection(db, col); const snap = await fs.getDocs(parts.length ? fs.query(ref, ...parts) : ref);
+      return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    },
+    del: (path) => fs.deleteDoc(fs.doc(db, path)),
+    newId: (col) => fs.doc(fs.collection(db, col)).id,
+  };
+}
+const Library = {
+  be: null, user: null, available: false, saveT: 0,
+  async init() {
+    try {
+      if (window.GUNBAN_CLOUD_BACKEND) this.be = window.GUNBAN_CLOUD_BACKEND; // 테스트·다른 백엔드용
+      else if (FIREBASE_CONFIG.apiKey && !window.claude && /^https?:$/.test(location.protocol)) this.be = await firebaseBackend(FIREBASE_CONFIG);
+    } catch (e) { console.warn("cloud", e); this.be = null; }
+    this.available = !!this.be;
+    $("#accountBox").hidden = !this.available;
+    if (!this.available) return;
+    this.be.onAuth((u) => { this.user = u; renderAccount(); });
+  },
+  root() { return `users/${this.user.uid}`; },
+  songPath(id) { return `${this.root()}/songs/${id}`; },
+  async putBig(sp, field, str, oldN) {
+    const n = str ? Math.ceil(str.length / CLOUD_CHUNK) : 0;
+    for (let i = 0; i < n; i++) await this.be.set(`${sp}/chunks/${field}_${i}`, { field, i, data: str.slice(i * CLOUD_CHUNK, (i + 1) * CLOUD_CHUNK) });
+    for (let i = n; i < (oldN || 0); i++) await this.be.del(`${sp}/chunks/${field}_${i}`).catch(() => {});
+    return n;
+  },
+  async getBig(sp, field, n) {
+    if (!n) return null;
+    const parts = await Promise.all(Array.from({ length: n }, (_, i) => this.be.get(`${sp}/chunks/${field}_${i}`)));
+    return parts.map((p) => (p ? p.data : "")).join("");
+  },
+  // 지금 곡을 보관함에 저장(새로 만들거나 덮어쓰기). file 이 있으면 원본(PDF·사진)도 함께 보관
+  async saveCurrent(file) {
+    if (!this.user || !song || !current || current.kind === "demo") return null;
+    const be = this.be; const id = current.cloudId || be.newId(`${this.root()}/songs`); const sp = this.songPath(id);
+    const prev = current.cloudId ? await be.get(sp).catch(() => null) : null; const pb = (prev && prev.big) || {};
+    const big = { ...pb };
+    big.xml = await this.putBig(sp, "xml", current.xml || "", pb.xml);
+    big.midi = await this.putBig(sp, "midi", (current.meta && current.meta.midiB64) || "", pb.midi);
+    big.ai = await this.putBig(sp, "ai", current.ai && current.ai.json ? JSON.stringify({ json: current.ai.json, ranges: current.ai.ranges }) : "", pb.ai);
+    let orig = prev && prev.original || null;
+    if (file && file.size <= 6e6) { big.orig = await this.putBig(sp, "orig", b64(await file.arrayBuffer()), pb.orig); orig = { name: file.name, type: file.type || "", size: file.size }; }
+    const now = Date.now();
+    const doc = {
+      title: song.title || current.name || "제목 없는 악보", kind: current.kind, name: current.name || "",
+      measures: song.measures.length, bpm: Math.round(song.baseBpm), createdAt: (prev && prev.createdAt) || now, updatedAt: now,
+      flags: current.flags || [], report: current.report || null, fixed: current.fixed || [],
+      tempos: current.raw && current.raw.tempos ? current.raw.tempos.map((t) => ({ q: t.q, bpm: t.bpm })) : [],
+      big, original: orig, stats: (prev && prev.stats) || { sessions: 0, lastAcc: null, bestAcc: null, totalSec: 0, lastAt: null },
+    };
+    await be.set(sp, doc);
+    current.cloudId = id; current.hasCloudOriginal = !!orig;
+    try { const last = JSON.parse(localStorage.getItem(STORE_KEY + ":last") || "null"); if (last) { last.cloudId = id; localStorage.setItem(STORE_KEY + ":last", JSON.stringify(last)); } } catch (e) {}
+    return id;
+  },
+  autoSave(file, quiet) {
+    if (!this.user || !current || current.kind === "demo") return;
+    clearTimeout(this.saveT);
+    this.saveT = setTimeout(async () => {
+      try { await this.saveCurrent(file); if (!quiet) toast("내 악보함에 저장했어요"); renderAccount(); }
+      catch (e) { console.warn(e); toast("악보함에 저장하지 못했어요. 인터넷 연결을 확인해 주세요."); }
+    }, file ? 50 : 800);
+  },
+  async list() { return this.be.list(`${this.root()}/songs`, { orderBy: "updatedAt", dir: "desc", limit: 200 }); },
+  async open(id) {
+    const sp = this.songPath(id); const d = await this.be.get(sp); if (!d) throw new Error("악보를 찾지 못했어요");
+    const big = d.big || {};
+    const [xml, midi, ai] = await Promise.all([this.getBig(sp, "xml", big.xml), this.getBig(sp, "midi", big.midi), this.getBig(sp, "ai", big.ai)]);
+    let raw;
+    if (xml) raw = parseMusicXML(xml); else if (midi) { raw = parseMIDI(unb64(midi)); raw.title = d.title; } else throw new Error("악보 내용이 비어 있어요");
+    if (Array.isArray(d.tempos) && d.tempos.length) raw.tempos = d.tempos.map((t) => ({ ...t }));
+    const aiObj = ai ? JSON.parse(ai) : null;
+    setSong(raw, { kind: d.kind, xml: xml || null, name: d.name, midiB64: midi || null, flags: d.flags || [], report: d.report || null, fixed: d.fixed || [], ai: aiObj, cloudId: id, fromLibrary: true });
+    current.hasCloudOriginal = !!(d.original && big.orig);
+    toast(`'${d.title}'을(를) 열었어요`);
+  },
+  async getOriginalFile(id) {
+    const sp = this.songPath(id); const d = await this.be.get(sp); if (!d || !d.original || !(d.big && d.big.orig)) return null;
+    const s = await this.getBig(sp, "orig", d.big.orig);
+    return new File([new Uint8Array(unb64(s))], d.original.name, { type: d.original.type || "application/octet-stream" });
+  },
+  async remove(id) {
+    const sp = this.songPath(id); const d = await this.be.get(sp).catch(() => null);
+    if (d && d.big) for (const [f, n] of Object.entries(d.big)) for (let i = 0; i < (n || 0); i++) await this.be.del(`${sp}/chunks/${f}_${i}`).catch(() => {});
+    const ss = await this.be.list(`${sp}/sessions`).catch(() => []); for (const s of ss) await this.be.del(`${sp}/sessions/${s.id}`).catch(() => {});
+    await this.be.del(sp);
+    if (current && current.cloudId === id) current.cloudId = null;
+  },
+  async logSession(s) {
+    if (!this.user || !current || !current.cloudId) return;
+    const sp = this.songPath(current.cloudId);
+    try {
+      await this.be.set(`${sp}/sessions/${this.be.newId(`${sp}/sessions`)}`, s);
+      const d = await this.be.get(sp); const st = (d && d.stats) || { sessions: 0, totalSec: 0 };
+      const ns = { sessions: (st.sessions || 0) + 1, totalSec: Math.round((st.totalSec || 0) + s.sec), lastAt: s.at, lastAcc: s.acc != null ? s.acc : st.lastAcc ?? null, bestAcc: s.acc != null ? Math.max(st.bestAcc || 0, s.acc) : st.bestAcc ?? null };
+      await this.be.set(sp, { stats: ns, updatedAt: Date.now() }, true);
+    } catch (e) { console.warn("session", e); }
+  },
+  async sessions(id) { return this.be.list(`${this.songPath(id)}/sessions`, { orderBy: "at", dir: "desc", limit: 20 }); },
+};
+// 연습 한 번(재생 시작~멈춤)을 기록한다
+const Practice = {
+  snap: null,
+  start() { this.snap = { t: performance.now(), c: E.correct, m: E.mistakes, l: E.loops, from: song ? measureAt(E.pos) + 1 : 1 }; },
+  flush() {
+    const s = this.snap; this.snap = null; if (!s || !song) return;
+    const sec = (performance.now() - s.t) / 1000; const c = E.correct - s.c, m = E.mistakes - s.m;
+    if (sec < 15 && c + m === 0) return; // 너무 짧은 재생은 기록하지 않음
+    Library.logSession({ at: Date.now(), sec: Math.round(sec), mode: settings.mode, hands: settings.hands, rate: Math.round(settings.rate * 100), correct: c, mistakes: m, acc: c + m ? Math.round(c / (c + m) * 100) : null, loops: E.loops - s.l, from: s.from, to: measureAt(E.pos) + 1 });
+  },
+};
+document.addEventListener("visibilitychange", () => { if (document.hidden && E.playing) Practice.flush(), Practice.start(); });
+function fmtDate(ms) { if (!ms) return ""; const d = new Date(ms); const p = (n) => String(n).padStart(2, "0"); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; }
+function renderAccount() {
+  const u = Library.user;
+  $("#loginBtn").hidden = !!u; $("#libBtn").hidden = !u;
+  if (u) $("#libBtnName").textContent = (u.name || u.email || "내 악보함").split(" ")[0];
+  if (!$("#libModal").hidden) renderLibrary();
+}
+async function renderLibrary() {
+  const u = Library.user; const list = $("#libList"), st = $("#libStatus");
+  $("#libUser").textContent = u ? `${u.name || ""} ${u.email ? "· " + u.email : ""}` : "";
+  $("#libSaveCur").hidden = !(u && current && current.kind !== "demo" && !current.cloudId);
+  list.innerHTML = ""; st.textContent = "불러오는 중…";
+  let songs = [];
+  try { songs = await Library.list(); } catch (e) { st.textContent = "악보함을 불러오지 못했어요. 인터넷 연결을 확인해 주세요."; return; }
+  st.textContent = songs.length ? `악보 ${songs.length}개` : "아직 저장된 악보가 없어요. 로그인한 상태에서 악보를 올리면 자동으로 여기에 저장돼요.";
+  const kindName = { musicxml: "MusicXML", midi: "MIDI", ai: "AI 초안", demo: "예제" };
+  songs.forEach((d) => {
+    const li = document.createElement("li"); li.className = "lib-item" + (current && current.cloudId === d.id ? " on" : "");
+    const s = d.stats || {};
+    const info = document.createElement("div"); info.className = "lib-info";
+    const t = document.createElement("b"); t.textContent = d.title || "제목 없는 악보";
+    const meta = document.createElement("span"); meta.className = "status";
+    meta.textContent = `${kindName[d.kind] || d.kind} · ${d.measures || "?"}마디 · ${fmtDate(d.updatedAt)}${s.sessions ? ` · 연습 ${s.sessions}회, 최근 정확도 ${s.lastAcc != null ? s.lastAcc + "%" : "–"}, 최고 ${s.bestAcc != null ? s.bestAcc + "%" : "–"}` : " · 아직 연습 기록 없음"}${d.original ? " · 원본 보관됨" : ""}`;
+    info.append(t, meta);
+    const acts = document.createElement("div"); acts.className = "lib-acts";
+    const bOpen = document.createElement("button"); bOpen.type = "button"; bOpen.className = "btn small primary"; bOpen.textContent = "열기";
+    bOpen.onclick = async () => { bOpen.disabled = true; try { await Library.open(d.id); $("#libModal").hidden = true; } catch (e) { toast(e.message || "열지 못했어요"); } bOpen.disabled = false; };
+    const bLog = document.createElement("button"); bLog.type = "button"; bLog.className = "btn small"; bLog.textContent = "연습 기록";
+    const logBox = document.createElement("div"); logBox.className = "lib-log"; logBox.hidden = true;
+    bLog.onclick = async () => {
+      logBox.hidden = !logBox.hidden; if (logBox.hidden) return; logBox.textContent = "불러오는 중…";
+      try {
+        const ss = await Library.sessions(d.id);
+        logBox.innerHTML = ""; if (!ss.length) { logBox.textContent = "아직 연습 기록이 없어요."; return; }
+        ss.forEach((x) => { const r = document.createElement("div"); r.textContent = `${fmtDate(x.at)} · ${x.mode === "wait" ? "따라치기" : "듣기"} · ${x.hands === "both" ? "양손" : x.hands === "R" ? "오른손" : "왼손"} · 속도 ${x.rate}% · ${x.from}~${x.to}마디 · ${Math.round(x.sec / 60 * 10) / 10}분${x.acc != null ? ` · 정확도 ${x.acc}% (틀린 음 ${x.mistakes})` : ""}${x.loops ? ` · 반복 ${x.loops}회` : ""}`; logBox.appendChild(r); });
+      } catch (e) { logBox.textContent = "기록을 불러오지 못했어요."; }
+    };
+    const bDel = document.createElement("button"); bDel.type = "button"; bDel.className = "btn small"; bDel.textContent = "삭제";
+    let armT = 0;
+    bDel.onclick = async () => {
+      if (bDel.dataset.armed !== "1") { bDel.dataset.armed = "1"; bDel.textContent = "정말 삭제"; bDel.classList.add("danger"); clearTimeout(armT); armT = setTimeout(() => { bDel.dataset.armed = ""; bDel.textContent = "삭제"; bDel.classList.remove("danger"); }, 3000); return; }
+      bDel.disabled = true; try { await Library.remove(d.id); toast("삭제했어요"); renderLibrary(); } catch (e) { toast("삭제하지 못했어요"); bDel.disabled = false; }
+    };
+    acts.append(bOpen, bLog, bDel); li.append(info, acts, logBox); list.appendChild(li);
+  });
+}
+$("#loginBtn").onclick = async () => { try { await Library.be.signIn(); } catch (e) { toast(e && e.code === "auth/popup-closed-by-user" ? "로그인을 취소했어요" : "로그인하지 못했어요: " + (e && (e.code || e.message) || "")); } };
+$("#libBtn").onclick = () => { $("#libModal").hidden = false; renderLibrary(); };
+$("#libClose").onclick = () => { $("#libModal").hidden = true; };
+$("#logoutBtn").onclick = async () => { Practice.flush(); await Library.be.signOut(); $("#libModal").hidden = true; toast("로그아웃했어요"); };
+$("#libSaveCur").onclick = async () => { try { await Library.saveCurrent(null); toast("지금 곡을 저장했어요"); renderLibrary(); } catch (e) { toast("저장하지 못했어요"); } };
 
 /* ============================================================
    15) PDF·사진 악보 → AI 인식 (베타)
@@ -1647,7 +1842,7 @@ async function openAIDialog(file) {
       }
       const flags = repairScore(all).concat(extra.filter((x) => x.m < all.measures.length));
       const xml = jsonToMusicXML(all);
-      setSong(parseMusicXML(xml), { kind: "ai", xml, name: file.name, origImages: pages.map((p) => p.url), flags, report: rep, fixed: fixedList, ai: { json: all, ranges, systems, maxImgs } });
+      setSong(parseMusicXML(xml), { kind: "ai", xml, name: file.name, file, origImages: pages.map((p) => p.url), flags, report: rep, fixed: fixedList, ai: { json: all, ranges, systems, maxImgs } });
       modal.hidden = true;
       toast(doVerify ? `원본 대조 결과: ${rep.total}마디 중 ${rep.match}마디 일치, ${rep.fixed}마디 고침, ${new Set(flags.map((f) => f.m)).size}마디 확인 필요` : `${all.measures.length}마디를 읽었어요.`);
     } catch (e) {
@@ -1669,7 +1864,10 @@ async function recheckMeasure(mi, filePromise) {
   recheckBusy = true; btn.disabled = true;
   try {
     if (!ai.systems) {
-      const f = await filePromise; if (!f) return;
+      let f = null;
+      if (!filePromise && current.cloudId && current.hasCloudOriginal) { btn.textContent = "악보함에서 원본 불러오는 중…"; f = await Library.getOriginalFile(current.cloudId).catch(() => null); }
+      else f = await filePromise;
+      if (!f) { toast("원본 파일이 없어서 다시 확인할 수 없어요"); return; }
       btn.textContent = "원본 준비 중…";
       const pages = await fileToPages(f); ai.systems = await pagesToSystems(pages);
       ai.maxImgs = Math.max(1, caps.images.maxCount || 5);
@@ -1692,7 +1890,7 @@ async function recheckMeasure(mi, filePromise) {
     });
     const keepPos = mi; const xml = jsonToMusicXML(ai.json);
     const rep = current.report ? { ...current.report } : null;
-    setSong(parseMusicXML(xml), { ...current.meta, persist: true, xml, flags: flags.concat(repairScore(JSON.parse(JSON.stringify(ai.json))).filter((f) => !flags.some((x) => x.m === f.m))), fixed, report: rep, ai, keepLoop: true });
+    setSong(parseMusicXML(xml), { ...current.meta, file: null, sameSong: true, fromLibrary: false, persist: true, xml, flags: flags.concat(repairScore(JSON.parse(JSON.stringify(ai.json))).filter((f) => !flags.some((x) => x.m === f.m))), fixed, report: rep, ai, keepLoop: true });
     if (song.measures[keepPos]) seek(song.measures[keepPos].start);
     toast(changed ? `고쳤어요 — ${notes.slice(0, 2).join(" / ")}` : res.verdicts[mi - rg.start] === "match" ? `${mi + 1}마디는 원본과 같아요. 그래도 이상하면 그 부분의 빠르기·손가락을 확인해 보세요.` : `${mi + 1}마디: 다를 수 있지만 확실히 고치지 못했어요`);
   } catch (e) {
@@ -1701,7 +1899,7 @@ async function recheckMeasure(mi, filePromise) {
 }
 $("#recheckBtn") && ($("#recheckBtn").onclick = () => {
   if (!song) return; const mi = measureAt(E.pos);
-  const needFile = current.ai && !current.ai.systems;
+  const needFile = current.ai && !current.ai.systems && !(current.cloudId && current.hasCloudOriginal && Library.user);
   if (needFile) toast("원본 악보 파일(PDF·사진)을 다시 골라 주세요. 줄 이미지를 다시 만들어요.");
   const fp = needFile ? pickFile(".pdf,image/*") : null; // 파일 고르기 창은 클릭 순간에 열어야 함
   recheckMeasure(mi, fp);
@@ -1724,6 +1922,8 @@ function boot() {
     }
   } catch (e) {}
   if (!restored) loadDemo();
+  try { const last = JSON.parse(localStorage.getItem(STORE_KEY + ":last") || "null"); if (restored && last && last.cloudId && current) current.cloudId = last.cloudId; } catch (e) {}
+  Library.init();
   if (matchMedia("(pointer: coarse)").matches) $("#hintKeys").hidden = true;
   requestAnimationFrame(frame);
 }
