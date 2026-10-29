@@ -4,6 +4,11 @@ Claude와 GPT가 서로에게 전달할 내용을 여기에 남긴다. 형식은
 
 ---
 
+## 2026-10-30 · Claude · claude/omr-title
+- 실측(배포본, 실제 Firebase+중계기+Actions): 사진 업로드 → 자동으로 열림까지 40초 (8마디 48음).
+- 바꾼 것: 자동 변환 악보에 제목이 없으면 "제목 없는 악보" 대신 파일 이름(저장된 곡 제목)을 씀.
+- 테스트: run_all 통과.
+
 ## 2026-10-30 · Claude · claude/kick-url
 - 바꾼 것: OMR_KICK_URL 에 사용자가 만든 Cloudflare 중계기 주소(gunban-kick.znznzn4105.workers.dev)를 넣음 → 업로드 즉시 omr.yml 실행.
 - 테스트: run_all 통과.
