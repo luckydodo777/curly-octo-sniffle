@@ -101,6 +101,61 @@ async function openPage(browser, opts = {}) {
     ok('모바일(400px) 가로 넘침 없음', !(await p.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)));
     await p.close(); }
 
+
+  // 7) 구글 로그인 + 내 악보함 + 연습 기록 (가짜 클라우드로 시험)
+  { const mockCloud = () => {
+      const store = new Map(); window.__store = store; let cb = null; let n = 0;
+      window.GUNBAN_CLOUD_BACKEND = {
+        onAuth: (f) => { cb = f; setTimeout(() => f(null), 0); },
+        signIn: async () => cb({ uid: 'u1', name: '테스트 사용자', email: 't@example.com' }),
+        signOut: async () => cb(null),
+        set: async (path, obj, merge) => { store.set(path, merge ? { ...(store.get(path) || {}), ...JSON.parse(JSON.stringify(obj)) } : JSON.parse(JSON.stringify(obj))); },
+        get: async (path) => (store.has(path) ? JSON.parse(JSON.stringify(store.get(path))) : null),
+        list: async (col, opt = {}) => { const depth = col.split('/').length + 1; let out = [...store.entries()].filter(([k]) => k.startsWith(col + '/') && k.split('/').length === depth).map(([k, v]) => ({ id: k.split('/').pop(), ...v })); if (opt.orderBy) out.sort((a, b) => (opt.dir === 'asc' ? 1 : -1) * ((a[opt.orderBy] || 0) - (b[opt.orderBy] || 0))); return opt.limit ? out.slice(0, opt.limit) : out; },
+        del: async (path) => { store.delete(path); },
+        newId: () => 'id' + (++n),
+      };
+      window.GUNBAN_AI_ADAPTER = { limits: async () => ({ images: { maxCount: 5 } }), json: async (input) => {
+        if (/proofreading/.test(input)) { const ms = JSON.parse(input.match(/is i=0\):\n(.*)\n/)[1]); return { measures: ms.map((m, i) => ({ i, match: true })) }; }
+        return { title: 'AI곡', measures: [{ rh: [{ p: 'C5', d: 'w' }], lh: [{ p: 'C3', d: 'w' }], bpm: 80, time: [4, 4] }, { rh: [{ p: 'D5', d: 'w' }], lh: [{ p: 'C3', d: 'w' }] }] }; } };
+    };
+    const { p, errs } = await openPage(browser, { mockAI: mockCloud });
+    ok('설정 전에는 로그인 버튼만 보임', await p.evaluate(() => !document.querySelector('#accountBox').hidden && !document.querySelector('#loginBtn').hidden && document.querySelector('#libBtn').hidden));
+    await p.click('#loginBtn'); await p.waitForTimeout(200);
+    ok('로그인하면 "내 악보함" 버튼이 보임', await p.evaluate(() => document.querySelector('#loginBtn').hidden && !document.querySelector('#libBtn').hidden));
+    await p.setInputFiles('#fileInput', FIX('test.musicxml')); await p.waitForTimeout(1200);
+    const saved = await p.evaluate(() => { const k = [...window.__store.keys()].filter((x) => /^users\/u1\/songs\/[^/]+$/.test(x)); const d = window.__store.get(k[0]); return { n: k.length, title: d && d.title, xml: d && d.big.xml, id: current.cloudId }; });
+    ok('악보를 올리면 계정에 자동 저장', saved.n === 1 && saved.title === 'Test Waltz' && saved.xml === 1 && !!saved.id, JSON.stringify(saved));
+    const t = await p.evaluate(async () => { const inp = document.querySelector('#tempoList input'); inp.value = 50; inp.dispatchEvent(new Event('change')); await new Promise((r) => setTimeout(r, 1200)); return window.__store.get('users/u1/songs/' + current.cloudId).tempos.map((x) => x.bpm); });
+    ok('고친 빠르기도 계정에 저장', JSON.stringify(t) === '[50]', JSON.stringify(t));
+    const sess = await p.evaluate(async () => { const G = GunbanNavi; G.settings.countIn = false; G.setMode('wait'); G.setHands('both'); G.seek(0); G.play(); await new Promise((r) => setTimeout(r, 300)); G.userNoteOn(30); const st = G.song.steps[G.E.waitIdx]; st.notes.forEach((n) => G.userNoteOn(n.midi)); await new Promise((r) => setTimeout(r, 200)); G.pause(); await new Promise((r) => setTimeout(r, 300)); const sp = 'users/u1/songs/' + current.cloudId; return { log: [...window.__store.keys()].filter((k) => k.startsWith(sp + '/sessions/')).map((k) => window.__store.get(k)), stats: window.__store.get(sp).stats }; });
+    ok('연습 기록 저장 (정확도·틀린 음)', sess.log.length === 1 && sess.log[0].mistakes === 1 && sess.stats.sessions === 1, JSON.stringify(sess.log[0]));
+    await p.evaluate(() => { GunbanNavi.pause(); loadDemo(); }); await p.waitForTimeout(300);
+    await p.click('#libBtn'); await p.waitForTimeout(600);
+    const lib = await p.evaluate(() => [...document.querySelectorAll('#libList .lib-item')].map((li) => li.innerText.replace(/\s+/g, ' ')));
+    ok('내 악보함 목록에 곡과 연습 요약이 보임', lib.length === 1 && /Test Waltz/.test(lib[0]) && /연습 1회/.test(lib[0]), lib[0]);
+    await p.click('#libList .lib-item button.primary'); await p.waitForTimeout(700);
+    const re = await p.evaluate(() => ({ title: GunbanNavi.song.title, bpm: GunbanNavi.song.baseBpm, id: current.cloudId, hidden: document.querySelector('#libModal').hidden }));
+    ok('악보함에서 다시 열기 (빠르기 수정 포함)', re.title === 'Test Waltz' && re.bpm === 50 && re.hidden, JSON.stringify(re));
+    const big = await p.evaluate(async () => { const s = 'x'.repeat(650000) + '한글'; const n = await Library.putBig('users/u1/songs/tmp', 'xml', s, 0); const back = await Library.getBig('users/u1/songs/tmp', 'xml', n); return { n, same: back === s }; });
+    ok('큰 악보는 나눠 저장하고 그대로 합침', big.n === 3 && big.same, JSON.stringify(big));
+    await p.setInputFiles('#fileInput', FIX('synthetic_page.png'));
+    await p.waitForSelector('#aiGo:not([disabled])', { timeout: 60000 }); await p.click('#aiGo');
+    await p.waitForFunction(() => document.querySelector('#aiModal').hidden, null, { timeout: 60000 }); await p.waitForTimeout(1000);
+    const ai = await p.evaluate(async () => { const d = window.__store.get('users/u1/songs/' + current.cloudId); current.ai.systems = null; const f = await Library.getOriginalFile(current.cloudId); return { kind: d.kind, orig: d.original && d.original.name, ai: d.big.ai, fsize: f && f.size }; });
+    ok('AI로 읽은 악보는 원본 이미지·판독 결과까지 저장', ai.kind === 'ai' && ai.orig === 'synthetic_page.png' && ai.ai >= 1 && ai.fsize > 1000, JSON.stringify(ai));
+    await p.evaluate(() => GunbanNavi.seek(GunbanNavi.song.measures[0].start)); await p.click('#recheckBtn'); await p.waitForTimeout(2500);
+    ok('새로고침 뒤 "다시 확인"은 악보함의 원본을 자동으로 씀', await p.evaluate(() => !!(current.ai && current.ai.systems)), await p.evaluate(() => document.querySelector('#toast').textContent));
+    await p.click('#libBtn'); await p.waitForTimeout(600);
+    const before = await p.evaluate(() => document.querySelectorAll('#libList .lib-item').length);
+    await p.evaluate(() => { const b = [...document.querySelectorAll('#libList .lib-item')].pop().querySelectorAll('button')[2]; b.click(); }); await p.waitForTimeout(100);
+    await p.evaluate(() => { const b = [...document.querySelectorAll('#libList .lib-item')].pop().querySelectorAll('button')[2]; b.click(); }); await p.waitForTimeout(800);
+    const after = await p.evaluate(() => ({ n: document.querySelectorAll('#libList .lib-item').length, left: [...window.__store.keys()].filter((k) => k.includes('/songs/') && !k.includes('/songs/tmp')).length }));
+    ok('삭제는 두 번 눌러야 지워지고, 딸린 데이터도 함께 삭제', before === 2 && after.n === 1, JSON.stringify({ before, ...after }));
+    await p.setViewportSize({ width: 400, height: 800 }); await p.waitForTimeout(200);
+    ok('로그인 상태 모바일(400px) 가로 넘침 없음', !(await p.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)));
+    ok('페이지 오류 없음', errs.length === 0, errs.join(' | ')); await p.close(); }
+
   await browser.close();
   console.log(failed ? `\n${failed}개 실패` : '\n모두 통과'); process.exit(failed ? 1 : 0);
 })();

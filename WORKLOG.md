@@ -4,6 +4,13 @@ Claude와 GPT가 서로에게 전달할 내용을 여기에 남긴다. 형식은
 
 ---
 
+## 2026-10-29 · Claude · claude/account-library
+- 바꾼 것: 구글 로그인 + "내 악보함" + 연습 기록 (Firebase Auth·Firestore, app.js 14-2 구역). 로그인 상태에서 올린 악보·AI 판독 결과·원본 PDF/사진·빠르기 수정·연습 기록이 계정별로 저장되고, 다른 기기에서도 열 수 있음. "지금 마디 다시 확인"은 새로고침 뒤에도 악보함의 원본을 자동으로 씀.
+- 이유: 사용자 요청 "계정별로 로그인해서 업로드한 파일과 기록을 남기고 싶다".
+- 아직 꺼져 있음: `FIREBASE_CONFIG`가 비어 있어 로그인 버튼이 숨겨져 있음. 사용자가 docs/FIREBASE_SETUP.md 대로 Firebase 프로젝트를 만들고 값 4개를 주면 켜짐.
+- 테스트: run_all 34/34 통과 (계정 기능 14개는 가짜 클라우드로 시험). 실제 Firebase 연결은 아직 시험 못 함.
+- 다음 사람에게: 값을 받으면 FIREBASE_CONFIG 에 넣는 PR 하나면 된다. 그 뒤 실제 로그인·저장을 Pages 주소에서 확인할 것.
+
 ## 2026-10-29 · Claude · claude/pages-deploy
 - 바꾼 것: GitHub Pages 자동 배포(`.github/workflows/deploy.yml`) 추가. main 의 test 가 통과하면 https://luckydodo777.github.io/curly-octo-sniffle/ 에 앱이 올라감. 앱 설정 패널 맨 아래에 배포 버전(커밋·시각) 표시.
 - 이유: 사용자가 "GPT도 앱을 직접 고칠 수 있게" 요청. 이제 GPT·Claude 누가 고쳐도 main 에 들어가면 사용자 화면이 바로 바뀜.
