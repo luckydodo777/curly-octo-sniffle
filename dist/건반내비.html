@@ -311,6 +311,9 @@ ol.steps b{color:var(--ink)}
         <li><b>PDF·사진</b> — AI가 읽어서 초안을 만들어요(베타). 복잡한 곡은 틀릴 수 있어요. 정확하게 하려면 MuseScore 4에서 PDF 가져오기(악보 인식) 후 MusicXML로 내보내 올려 주세요.</li>
       </ul>
     </div>
+    <div class="sec">
+      <div class="status" id="buildInfo">버전 정보 없음 (내려받은 파일 또는 게시본)</div>
+    </div>
   </aside>
 </div>
 
@@ -2045,6 +2048,7 @@ $("#recheckBtn") && ($("#recheckBtn").onclick = () => {
    16) 시작
    ============================================================ */
 function boot() {
+  try { const bm = document.querySelector('meta[name="gunban-build"]'); if (bm) $("#buildInfo").textContent = "버전 " + bm.content + " (GitHub 자동 배포)"; } catch (e) {}
   setMode(settings.mode); setHands(settings.hands); setRate(settings.rate); updateOct();
   $("#metroBtn").setAttribute("aria-pressed", String(!!settings.metro)); $("#loopBtn").setAttribute("aria-pressed", String(!!settings.loopOn)); $("#loopOn").checked = !!settings.loopOn;
   applyView();

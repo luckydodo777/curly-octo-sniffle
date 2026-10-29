@@ -2,6 +2,11 @@
 
 이 저장소는 **Claude**와 **GPT(ChatGPT·Codex)**가 함께 고치는 곳이다. 사용자가 파일을 직접 옮기지 않아도 되도록, 모든 변경과 전달 사항은 **이 저장소 안에서만** 주고받는다.
 
+## 실제 앱 = GitHub Pages
+- 사용자가 쓰는 앱 주소: https://luckydodo777.github.io/curly-octo-sniffle/
+- `main`에 합쳐지고 테스트가 통과하면 자동으로 배포된다(`.github/workflows/deploy.yml`). Claude든 GPT든 main에 들어간 변경이 곧 사용자 화면이 된다.
+- 배포된 버전은 앱 설정 패널 맨 아래 "버전 <커밋> · <시각>"으로 확인한다.
+
 ## 원칙
 1. **유일한 원본은 이 저장소의 `main` 브랜치.** 채팅에 붙여 넣은 코드나 로컬 사본은 원본이 아니다.
 2. **작업은 브랜치에서 한다.** Claude는 `claude/<주제>`, GPT는 `gpt/<주제>`. `main`에 직접 푸시하지 않는다.
