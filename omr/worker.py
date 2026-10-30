@@ -34,9 +34,10 @@ def mxl_to_xml(path):
         return z.read(root).decode("utf-8")
 
 
-# PDF를 몇 DPI로 그림으로 바꿔 읽을지. Audiveris 기본(300)은 작은 악보에서 오선 간격이 18px 정도라 음을 많이 놓친다.
-# 실측(Sibelius 9쪽 피아노 악보): 300DPI 음 1158개·박자 오류 64마디 → 400DPI 음 2844개·오류 39마디. 500 이상은 Audiveris 이미지 크기 한도(2천만 화소) 초과.
-PDF_DPI = int(os.environ.get("OMR_PDF_DPI", "400"))
+# PDF를 몇 DPI로 그림으로 바꿔 읽을지. Audiveris 기본(300)은 오선이 작은 악보에서 오선 간격이 18px 정도라 음을 많이 놓친다.
+# 실측(Sibelius 9쪽 피아노 악보, 300DPI 간격 18px): 300DPI 음 1158개·박자 오류 64마디 → 400DPI 음 2844개·오류 39마디.
+# 반대로 오선이 이미 큰 악보(MuseScore 기본)는 300이 더 정확했다 → "auto": 첫 쪽 오선 간격을 재서 약 24px이 되게 고른다.
+PDF_DPI = os.environ.get("OMR_PDF_DPI", "auto")
 
 
 def _run_audiveris(audiveris, src_path, out, dpi):
@@ -56,8 +57,18 @@ def convert(audiveris, src_path, workdir, title=""):
     os.makedirs(out, exist_ok=True)
     t = time.time()
     is_pdf = src_path.lower().endswith(".pdf")
-    p, mxls = _run_audiveris(audiveris, src_path, out, PDF_DPI if is_pdf else 0)
-    if not mxls and is_pdf and PDF_DPI != 300:  # 쪽이 너무 커서 한도를 넘으면 기본 해상도로 다시
+    dpi, il300 = 0, None
+    if is_pdf:
+        if PDF_DPI == "auto":
+            try:
+                from postprocess import pick_pdf_dpi
+                dpi, il300 = pick_pdf_dpi(src_path)
+            except Exception:  # noqa: BLE001
+                dpi = 300
+        else:
+            dpi = int(PDF_DPI)
+    p, mxls = _run_audiveris(audiveris, src_path, out, dpi if dpi != 300 else 0)
+    if not mxls and is_pdf and dpi != 300:  # 쪽이 너무 커서 한도를 넘으면 기본 해상도로 다시
         out = os.path.join(workdir, "out300")
         os.makedirs(out, exist_ok=True)
         p, mxls = _run_audiveris(audiveris, src_path, out, 300)
@@ -70,7 +81,7 @@ def convert(audiveris, src_path, workdir, title=""):
         xml, rep = polish(xml, src_path, title)
     except Exception as e:  # noqa: BLE001  (다듬기가 실패해도 원래 결과는 쓴다)
         rep = {"polishError": str(e)[:200]}
-    info = {"tempos": rep.get("tempos", []), "timeFixes": rep.get("timeFixes", []),"seconds": round(time.time() - t, 1), "movements": len(mxls), "measures": len(re.findall(r"<measure[\s>]", xml)) // max(1, len(re.findall(r"<part[\s>]", xml)))}
+    info = {"dpi": dpi or None, "interline300": il300, "tempos": rep.get("tempos", []), "timeFixes": rep.get("timeFixes", []),"seconds": round(time.time() - t, 1), "movements": len(mxls), "measures": len(re.findall(r"<measure[\s>]", xml)) // max(1, len(re.findall(r"<part[\s>]", xml)))}
     return xml, info
 
 

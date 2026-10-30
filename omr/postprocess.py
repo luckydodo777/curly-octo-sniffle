@@ -242,3 +242,57 @@ def polish(xml, src_path, title=""):
     xml = set_title(xml, title)
     rep.update({"tempos": tempos, "timeFixes": fixes})
     return xml, rep
+
+
+def staff_interline(pdf_path, dpi=200):
+    """PDF 첫 쪽의 오선 간격(픽셀, 주어진 dpi 기준)을 대충 잰다. 실패하면 None."""
+    if not shutil.which("pdftoppm"):
+        return None, None
+    try:
+        raw = subprocess.run(["pdftoppm", "-f", "1", "-l", "1", "-r", str(dpi), "-gray", pdf_path], capture_output=True, timeout=60).stdout
+    except Exception:
+        return None, None
+    # PGM(P5) 머리글: P5 w h max
+    parts, i = [], 0
+    while len(parts) < 4:
+        while raw[i:i + 1].isspace():
+            i += 1
+        j = i
+        while not raw[j:j + 1].isspace():
+            j += 1
+        parts.append(raw[i:j])
+        i = j
+    i += 1
+    if parts[0] != b"P5":
+        return None, None
+    w, h = int(parts[1]), int(parts[2])
+    px = raw[i:i + w * h]
+    dark = [sum(1 for b in px[y * w:(y + 1) * w] if b < 128) / w for y in range(h)]
+    top = max(dark) or 1
+    lines, run = [], []
+    for y, d in enumerate(dark):
+        if d > 0.35 * top:
+            run.append(y)
+        elif run:
+            lines.append(sum(run) / len(run))
+            run = []
+    diffs = [round(b - a) for a, b in zip(lines, lines[1:]) if 2 < b - a < h * 0.03]
+    if len(diffs) < 4:
+        return None, (w / dpi, h / dpi)
+    mode = max(set(diffs), key=diffs.count)
+    near = [d for d in diffs if abs(d - mode) <= 1]
+    return sum(near) / len(near), (w / dpi, h / dpi)
+
+
+def pick_pdf_dpi(pdf_path, target=24.0, base=300, max_pixels=20_000_000):
+    """Audiveris가 잘 읽는 오선 간격(약 24픽셀)이 되도록 PDF 해상도를 고른다. 이미 충분히 크면 기본값."""
+    il, size = staff_interline(pdf_path)
+    if not il:
+        return base, None
+    il300 = il * base / 200
+    if il300 >= 21:
+        return base, round(il300, 1)
+    dpi = base * target / il300
+    if size:
+        dpi = min(dpi, (max_pixels * 0.97 / (size[0] * size[1])) ** 0.5)
+    return int(max(base, min(dpi, 600)) // 25 * 25), round(il300, 1)
