@@ -42,7 +42,7 @@ jobs:
         run: |
           python build.py
           npm install --no-save playwright@1.48.2 && npx playwright install --with-deps chromium >/dev/null
-          node tests/omr_compare.js omr/test /tmp/omrout > /tmp/cmp.txt 2>&1; c=$?; cat /tmp/cmp.txt
+          set +e; node tests/omr_compare.js omr/test /tmp/omrout > /tmp/cmp.txt 2>&1; c=$?; set -e; cat /tmp/cmp.txt
           head -c 3000 /tmp/cmp.txt | while IFS= read -r l; do echo "::warning::${l:0:300}"; done; exit $c
       - name: 변환 서버(Docker) 만들기
         run: docker build -t gunban-omr omr
