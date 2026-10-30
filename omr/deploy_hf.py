@@ -13,7 +13,7 @@ repo = os.environ.get("HF_SPACE", "").strip() or f"{api.whoami()['name']}/gunban
 api.create_repo(repo, repo_type="space", space_sdk="docker", exist_ok=True, private=False)
 here = os.path.dirname(os.path.abspath(__file__))
 with tempfile.TemporaryDirectory() as d:
-    for f in ("Dockerfile", "server.py", "worker.py", ".dockerignore"):
+    for f in ("Dockerfile", "server.py", "worker.py", "postprocess.py", ".dockerignore"):
         shutil.copy(os.path.join(here, f), d)
     open(os.path.join(d, "README.md"), "w", encoding="utf-8").write(
         "---\ntitle: gunban-omr\nemoji: 🎹\ncolorFrom: green\ncolorTo: blue\nsdk: docker\napp_port: 7860\npinned: false\nlicense: agpl-3.0\n---\n\n"

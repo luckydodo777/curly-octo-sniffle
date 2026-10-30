@@ -23,7 +23,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          sudo apt-get update -q && sudo apt-get install -y -q musescore3 xvfb >/dev/null
+          sudo apt-get update -q && sudo apt-get install -y -q musescore3 xvfb poppler-utils >/dev/null
           mkdir -p /tmp/aud /tmp/audx
           ls /tmp/aud/*.deb >/dev/null 2>&1 || gh release download 5.11.0 -R Audiveris/audiveris --pattern '*ubuntu24.04*.deb' -D /tmp/aud
           dpkg-deb -x /tmp/aud/*.deb /tmp/audx

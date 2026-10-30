@@ -3,7 +3,7 @@ name: hf-deploy
 on:
   push:
     branches: [main]
-    paths: ["omr/Dockerfile", "omr/server.py", "omr/worker.py", "omr/deploy_hf.py", ".github/workflows/hf-deploy.yml"]
+    paths: ["omr/Dockerfile", "omr/server.py", "omr/worker.py", "omr/postprocess.py", "omr/deploy_hf.py", ".github/workflows/hf-deploy.yml"]
   workflow_dispatch:
 jobs:
   deploy:

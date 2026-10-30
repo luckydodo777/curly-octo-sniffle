@@ -73,7 +73,7 @@ class H(BaseHTTPRequestHandler):
                     src = os.path.join(w, "score" + ext)
                     with open(src, "wb") as f:
                         f.write(raw)
-                    xml, info = convert(AUDIVERIS, src, w)
+                    xml, info = convert(AUDIVERIS, src, w, os.path.splitext(name)[0])
             info["total"] = round(time.time() - t0, 1)
             print(f"ok bytes={n} measures={info['measures']} sec={info['total']}", flush=True)
             self._send(200, {"xml": xml, "info": info})

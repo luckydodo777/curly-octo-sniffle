@@ -226,6 +226,23 @@ async function openPage(browser, opts = {}) {
     ok('변환 서버 결과를 받아 바로 열기 (로그인 없이)', r.title === 'synthetic_page' && r.kind === 'omr' && /완료/.test(r.chip) && posts === 2 && gotName === 'synthetic_page.png' && wakes >= 1, JSON.stringify({ ...r, posts, wakes, gotName }));
     ok('페이지 오류 없음', errs.length === 0, errs.join(' | ')); await p.close(); }
 
+  // 10) 악보 인식 결과 다듬기: 박자가 넘치는 마디는 그 성부만 마디 길이에 맞추고 "확인 필요"로 표시
+  { const { p, errs } = await openPage(browser);
+    const r = await p.evaluate(() => {
+      const note = (st, dur, voice, staff) => `<note><pitch><step>${st}</step><octave>4</octave></pitch><duration>${dur}</duration><voice>${voice}</voice><staff>${staff}</staff></note>`;
+      const xml = `<?xml version="1.0"?><score-partwise><part-list><score-part id="P1"><part-name>P</part-name></score-part></part-list><part id="P1">
+        <measure number="1"><attributes><divisions>2</divisions><time><beats>3</beats><beat-type>4</beat-type></time><staves>2</staves></attributes>${note('C', 2, 1, 1)}${note('D', 2, 1, 1)}${note('E', 2, 1, 1)}<backup><duration>6</duration></backup>${note('C', 6, 5, 2)}</measure>
+        <measure number="2">${note('C', 2, 1, 1)}${note('D', 2, 1, 1)}${note('E', 2, 1, 1)}${note('F', 2, 1, 1)}<backup><duration>8</duration></backup>${note('C', 6, 5, 2)}</measure>
+        <measure number="3">${note('G', 2, 1, 1)}${note('A', 2, 1, 1)}<backup><duration>4</duration></backup>${note('C', 4, 5, 2)}</measure>
+      </part></score-partwise>`;
+      const a = parseMusicXML(xml), f = parseMusicXML(xml, { fit: true });
+      const m2 = f.notes.filter((n) => n.measure === 1 && n.staff === 1).map((n) => +n.startQ.toFixed(3));
+      return { plainLen: a.measures[1].lenQ, fitLen: f.measures[1].lenQ, m3start: f.measures[2].startQ, m2, flags: f.fitFlags.map((x) => x.m), lhStart: f.notes.find((n) => n.measure === 1 && n.staff === 2).startQ };
+    });
+    ok('인식 오류 마디 맞추기: 넘치는 성부만 줄이고 다음 마디 박이 밀리지 않음', r.plainLen === 4 && r.fitLen === 3 && r.m3start === 6 && JSON.stringify(r.m2) === '[3,3.75,4.5,5.25]' && r.lhStart === 3, JSON.stringify(r));
+    ok('맞춘 마디·빠진 마디는 "확인 필요"로 표시', JSON.stringify(r.flags) === '[1,2]', JSON.stringify(r.flags));
+    ok('페이지 오류 없음', errs.length === 0, errs.join(' | ')); await p.close(); }
+
   await browser.close();
   console.log(failed ? `\n${failed}개 실패` : '\n모두 통과'); process.exit(failed ? 1 : 0);
 })();
