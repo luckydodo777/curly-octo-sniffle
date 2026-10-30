@@ -49,7 +49,8 @@ jobs:
           mkdir -p /tmp/aud /tmp/audx
           ls /tmp/aud/*.deb >/dev/null 2>&1 || gh release download 5.11.0 -R Audiveris/audiveris --pattern '*ubuntu24.04*.deb' -D /tmp/aud
           dpkg-deb -x /tmp/aud/*.deb /tmp/audx
-          command -v xvfb-run >/dev/null || sudo apt-get install -y -q xvfb >/dev/null
+          need=""; command -v xvfb-run >/dev/null || need="$need xvfb"; command -v pdftotext >/dev/null || need="$need poppler-utils"
+          [ -z "$need" ] || sudo apt-get install -y -q $need >/dev/null
       - name: 변환
         if: steps.q.outputs.has == 'yes'
         run: python omr/worker.py --run --linger 600 --audiveris /tmp/audx/opt/audiveris/bin/Audiveris

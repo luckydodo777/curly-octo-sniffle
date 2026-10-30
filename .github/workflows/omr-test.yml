@@ -23,7 +23,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          sudo apt-get update -q && sudo apt-get install -y -q musescore3 xvfb >/dev/null
+          sudo apt-get update -q && sudo apt-get install -y -q musescore3 xvfb poppler-utils >/dev/null
           mkdir -p /tmp/aud /tmp/audx
           ls /tmp/aud/*.deb >/dev/null 2>&1 || gh release download 5.11.0 -R Audiveris/audiveris --pattern '*ubuntu24.04*.deb' -D /tmp/aud
           dpkg-deb -x /tmp/aud/*.deb /tmp/audx
@@ -34,11 +34,16 @@ jobs:
           ls -la /tmp/pdf
       - name: Audiveris로 다시 읽기
         run: python omr/worker.py --local /tmp/pdf /tmp/omrout --audiveris /tmp/audx/opt/audiveris/bin/Audiveris
+      - name: 진단 (변환 정보)
+        if: always()
+        run: |
+          python omr/worker.py --local /tmp/pdf /tmp/omrout --audiveris /tmp/audx/opt/audiveris/bin/Audiveris 2>&1 | while IFS= read -r l; do echo "::notice::${l:0:300}"; done
       - name: 원본과 비교 (음높이·시작·길이·손 100% 일치해야 통과)
         run: |
           python build.py
           npm install --no-save playwright@1.48.2 && npx playwright install --with-deps chromium >/dev/null
-          node tests/omr_compare.js omr/test /tmp/omrout
+          set +e; node tests/omr_compare.js omr/test /tmp/omrout > /tmp/cmp.txt 2>&1; c=$?; set -e; cat /tmp/cmp.txt
+          head -c 3000 /tmp/cmp.txt | while IFS= read -r l; do echo "::warning::${l:0:300}"; done; exit $c
       - name: 변환 서버(Docker) 만들기
         run: docker build -t gunban-omr omr
       - name: 변환 서버로 다시 읽기 (앱과 같은 방식으로 파일 그대로 POST)

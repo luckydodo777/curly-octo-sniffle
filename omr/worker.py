@@ -34,21 +34,54 @@ def mxl_to_xml(path):
         return z.read(root).decode("utf-8")
 
 
-def convert(audiveris, src_path, workdir):
+# PDF를 몇 DPI로 그림으로 바꿔 읽을지. Audiveris 기본(300)은 오선이 작은 악보에서 오선 간격이 18px 정도라 음을 많이 놓친다.
+# 실측(Sibelius 9쪽 피아노 악보, 300DPI 간격 18px): 300DPI 음 1158개·박자 오류 64마디 → 400DPI 음 2844개·오류 39마디.
+# 반대로 오선이 이미 큰 악보(MuseScore 기본)는 300이 더 정확했다 → "auto": 첫 쪽 오선 간격을 재서 약 24px이 되게 고른다.
+PDF_DPI = os.environ.get("OMR_PDF_DPI", "auto")
+
+
+def _run_audiveris(audiveris, src_path, out, dpi):
+    cmd = [audiveris, "-batch"]
+    if dpi:
+        cmd += ["-option", f"org.audiveris.omr.image.ImageLoading.pdfResolution={dpi}"]
+    cmd += ["-transcribe", "-export", "-output", out, src_path]
+    if shutil.which("xvfb-run"):
+        cmd = ["xvfb-run", "-a"] + cmd
+    p = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+    return p, sorted(glob.glob(os.path.join(out, "**", "*.mxl"), recursive=True))
+
+
+def convert(audiveris, src_path, workdir, title=""):
     """Audiveris 실행 → (MusicXML 문자열, 정보). 여러 악장/페이지면 첫 번째 결과를 쓰되 개수를 알려 준다."""
     out = os.path.join(workdir, "out")
     os.makedirs(out, exist_ok=True)
-    cmd = [audiveris, "-batch", "-transcribe", "-export", "-output", out, src_path]
-    if shutil.which("xvfb-run"):
-        cmd = ["xvfb-run", "-a"] + cmd
     t = time.time()
-    p = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
-    mxls = sorted(glob.glob(os.path.join(out, "**", "*.mxl"), recursive=True))
+    is_pdf = src_path.lower().endswith(".pdf")
+    dpi, il300 = 0, None
+    if is_pdf:
+        if PDF_DPI == "auto":
+            try:
+                from postprocess import pick_pdf_dpi
+                dpi, il300 = pick_pdf_dpi(src_path)
+            except Exception:  # noqa: BLE001
+                dpi = 300
+        else:
+            dpi = int(PDF_DPI)
+    p, mxls = _run_audiveris(audiveris, src_path, out, dpi if dpi != 300 else 0)
+    if not mxls and is_pdf and dpi != 300:  # 쪽이 너무 커서 한도를 넘으면 기본 해상도로 다시
+        out = os.path.join(workdir, "out300")
+        os.makedirs(out, exist_ok=True)
+        p, mxls = _run_audiveris(audiveris, src_path, out, 300)
     if not mxls:
         tail = "\n".join((p.stdout + p.stderr).splitlines()[-15:])
         raise RuntimeError("Audiveris가 악보를 찾지 못했어요 (오선이 보이는 선명한 악보인지 확인해 주세요)\n" + tail)
     xml = mxl_to_xml(mxls[0])
-    info = {"seconds": round(time.time() - t, 1), "movements": len(mxls), "measures": len(re.findall(r"<measure\b", xml)) // max(1, len(re.findall(r"<part\b[^-]", xml)))}
+    try:
+        from postprocess import polish
+        xml, rep = polish(xml, src_path, title)
+    except Exception as e:  # noqa: BLE001  (다듬기가 실패해도 원래 결과는 쓴다)
+        rep = {"polishError": str(e)[:200]}
+    info = {"dpi": dpi or None, "interline300": il300, "tempos": rep.get("tempos", []), "timeFixes": rep.get("timeFixes", []),"seconds": round(time.time() - t, 1), "movements": len(mxls), "measures": len(re.findall(r"<measure[\s>]", xml)) // max(1, len(re.findall(r"<part[\s>]", xml)))}
     return xml, info
 
 
@@ -58,7 +91,7 @@ def local_mode(args):
     for f in sorted(glob.glob(os.path.join(args.local[0], "*.pdf")) + glob.glob(os.path.join(args.local[0], "*.png")) + glob.glob(os.path.join(args.local[0], "*.jpg"))):
         with tempfile.TemporaryDirectory() as w:
             try:
-                xml, info = convert(args.audiveris, f, w)
+                xml, info = convert(args.audiveris, f, w, os.path.splitext(os.path.basename(f))[0])
                 name = os.path.splitext(os.path.basename(f))[0] + ".musicxml"
                 open(os.path.join(args.local[1], name), "w", encoding="utf-8").write(xml)
                 print(f"OK {os.path.basename(f)} {info}")
@@ -130,7 +163,7 @@ def process_queue(db, args):
             with tempfile.TemporaryDirectory() as w:
                 src = os.path.join(w, "score" + ext)
                 open(src, "wb").write(raw)
-                xml, info = convert(args.audiveris, src, w)
+                xml, info = convert(args.audiveris, src, w, re.sub(r"\.[^.]+$", "", job.get("name") or ""))
             # 내 악보함에 새 곡으로 저장 (앱의 Library.open 이 읽는 형식과 같게)
             title = re.sub(r"\.[^.]+$", "", job.get("name") or "변환한 악보")
             m = re.search(r"<work-title>([^<]+)</work-title>", xml) or re.search(r"<movement-title>([^<]+)</movement-title>", xml)
