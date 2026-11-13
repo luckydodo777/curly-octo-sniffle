@@ -472,6 +472,21 @@ async function openPage(browser, opts = {}) {
     ok('마이크 전체 흐름: 4번 친 소리 → 입력 4번 (워클릿·워커)', r.n === 4 && /worker\+worklet/.test(r.mode), JSON.stringify([r.mode, r.err, r.n]));
     ok('마이크 켜는 동안 앱 소리 끄고, 끄면 되돌림 · 음역 표시', JSON.stringify(r.offWhileOn) === '[false,false]' && JSON.stringify(r.restored) === '[true,true]' && /1400Hz/.test(r.status), JSON.stringify([r.offWhileOn, r.restored, r.status]));
     ok('페이지 오류 없음 (마이크)', errs.length === 0, errs.join(' | '));
+    // 소리가 완전히 0인 마이크(실기기에서 장치·샘플레이트가 안 맞을 때 등): 스스로 마이크 전용 오디오로 바꿔 보고, 그래도 0이면 안내
+    const p2 = await b2.newPage(); const errs2 = []; p2.on('pageerror', (e) => errs2.push(e.message));
+    await p2.addInitScript(() => { navigator.mediaDevices.getUserMedia = async () => { const ac = new AudioContext(); return ac.createMediaStreamDestination().stream; }; });
+    await p2.route('**/*', (r) => (r.request().url().startsWith('file:') ? r.continue() : r.abort()));
+    await p2.goto(PAGE); await p2.waitForTimeout(800);
+    const w = await p2.evaluate(async () => { const G = GunbanNavi; await G.Mic.start(); await new Promise((r) => setTimeout(r, 5600));
+      const out = { fixes: G.Mic.fixes.slice(), mode: G.Mic.mode, status: document.querySelector('#micStatus').textContent }; G.Mic.stop(); out.ownAfterStop = !!G.Mic.ownCtx; return out; });
+    ok('무음 마이크: 마이크 전용 오디오로 다시 연결해 보고, 그래도 0이면 진단 복사 안내', w.fixes.includes('ownctx') && /ownctx/.test(w.mode) && /들어오지 않아요/.test(w.status) && !w.ownAfterStop, JSON.stringify([w.fixes, w.mode, w.status.slice(0, 30)]));
+    const p3 = await b2.newPage();
+    await p3.addInitScript(() => { navigator.mediaDevices.getUserMedia = async (c) => { if (c && typeof c.audio === 'object') throw Object.assign(new Error('Invalid constraint'), { name: 'OverconstrainedError' }); const ac = new AudioContext(); return ac.createMediaStreamDestination().stream; }; });
+    await p3.route('**/*', (r) => (r.request().url().startsWith('file:') ? r.continue() : r.abort()));
+    await p3.goto(PAGE); await p3.waitForTimeout(800);
+    const oc = await p3.evaluate(async () => { const G = GunbanNavi; await G.Mic.start(); const out = { on: G.Mic.on, fixes: G.Mic.fixes.slice() }; G.Mic.stop(); return out; });
+    ok('마이크 조건을 못 받는 기기(OverconstrainedError): 기본 설정으로 다시 켬', oc.on && oc.fixes[0] === 'plain:OverconstrainedError', JSON.stringify(oc));
+    ok('페이지 오류 없음 (무음 마이크)', errs2.length === 0, errs2.join(' | '));
     await b2.close(); }
 
   // 15) 화음 판정 (이슈 #14 PR 4): 0.2초 안에 함께 쳐야 맞음, 한 음씩 인정 설정, 마이크 화음
@@ -551,6 +566,43 @@ async function openPage(browser, opts = {}) {
     const mob = await p.evaluate(() => getComputedStyle(document.querySelector('#sideToggle')).display);
     ok('연습 설정 접기: 접으면 건반·낙하 노트가 넓어짐', a.side === 'none' && a.fall > w0 + 200 && a.text === '설정 펼치기' && a.exp === 'false' && a.saved === true, JSON.stringify([w0, a]));
     ok('접힌 상태 기억 · \\ 키로 펼치기 · 좁은 화면은 기존 설정 버튼', kept === 'none' && back === 'block' && mob === 'none', JSON.stringify([kept, back, mob]));
+    ok('페이지 오류 없음', errs.length === 0, errs.join(' | ')); await p.close(); }
+
+  // 18) 태블릿(아이패드) 연습: 첫 음을 치면 따라치기 자동 시작, 작은 마이크 소리도 인식, 들린 음 표시, 마이크 안내, 화면 배치
+  { const { p, errs } = await openPage(browser, { viewport: { width: 1180, height: 820 } });
+    const r = await p.evaluate(async () => {
+      const G = GunbanNavi; const out = {};
+      // 따라치기 + 멈춤 상태에서 첫 음을 치면 시작
+      G.pause(); G.setMode('wait'); G.setHands('both'); G.seek(0, false, 'test'); G.settings.countIn = true;
+      out.hint = !document.querySelector('#inputHint').hidden; // 마이크·전자피아노 없으면 안내
+      const st = G.song.steps[0]; st.notes.forEach((n) => G.Input.on(n.midi, 0.7, 'kb')); st.notes.forEach((n) => G.Input.off(n.midi));
+      out.autostart = [G.E.playing, G.E.countIn <= 0, G.E.waitIdx];
+      // 틀린 음으로는 시작하지 않음
+      G.pause(); G.seek(0, false, 'test'); G.Input.on(30, 0.7, 'kb'); G.Input.off(30); out.wrongStarts = G.E.playing; G.pause();
+      // 작은 소리(아이패드 마이크처럼): 예전 기준(0.01)보다 작은 소리도 10번 인식
+      const sr = 48000, N = Math.round(3.5 * sr), x = new Float32Array(N); let seed = 3; const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647) * 2 - 1;
+      for (let k = 0; k < 10; k++) { const t0 = 0.1 + k * 0.3, i0 = Math.round(t0 * sr), i1 = Math.round((t0 + 0.27) * sr);
+        for (let i = i0; i < N; i++) { const tt = (i - i0) / sr; let env = Math.min(1, tt / 0.005) * Math.exp(-tt / 0.8) * 0.006; if (i >= i1) env *= Math.exp(-(i - i1) / sr / 0.01); if (tt > 0.01 && env < 1e-6) break;
+          x[i] += env * (Math.sin(2 * Math.PI * 440 * tt) + 0.5 * Math.sin(4 * Math.PI * 440 * tt)) + (tt < 0.004 ? rnd() * 0.002 : 0); } }
+      for (let i = 0; i < N; i++) x[i] += rnd() * 0.0004;
+      const A = G.createMicAnalyzer(sr); const ev = []; for (let i = 0; i + 512 <= N; i += 512) ev.push(...A.feed(x.slice(i, i + 512), (i + 512) / sr));
+      out.quiet = ev.filter((e) => e.type === 'on').length; out.levels = ev.filter((e) => e.type === 'level').length;
+      let rms = 0; for (let i = 0; i < N; i++) rms += x[i] * x[i]; out.rms = +Math.sqrt(rms / N).toFixed(4);
+      // 들린 음 표시
+      G.Mic.on = true; G.Mic.handle({ type: 'on', midi: 69 }); out.heard = document.querySelector('#heard').hidden ? '' : document.querySelector('#heard').textContent;
+      G.Mic.handle({ type: 'level', r: 0.05, floor: 0.001 }); out.lvl = document.querySelector('#micQuick').style.getPropertyValue('--lvl'); G.Mic.handle({ type: 'off', midi: 69 }); G.Mic.on = false;
+      // 화면 배치: 피아노(낙하 노트+건반)가 화면 높이의 절반 이상, 설정은 서랍(1180px 터치 아님 → 접기 버튼 대신 서랍)
+      const h = (s2) => document.querySelector(s2).getBoundingClientRect().height;
+      out.pianoShare = +((h('#fall') + h('#keys')) / innerHeight).toFixed(2);
+      out.sideFixed = getComputedStyle(document.querySelector('#side')).position;
+      out.line = document.querySelector('#app').classList.contains('score-line');
+      return out;
+    });
+    ok('따라치기: 멈춰 있을 때 첫 음을 맞게 치면 바로 시작(준비 박자 없이), 틀린 음은 시작 안 함', r.autostart[0] && r.autostart[1] && r.autostart[2] === 1 && r.wrongStarts === false, JSON.stringify(r));
+    ok('마이크·전자피아노가 없으면 따라치기에서 마이크 켜기 안내', r.hint, String(r.hint));
+    ok('작은 마이크 소리(RMS 약 0.003)도 같은 음 10번 인식 · 소리 크기 이벤트', r.quiet === 10 && r.levels > 50 && r.rms < 0.01, JSON.stringify([r.quiet, r.levels, r.rms]));
+    ok('들린 음 표시 · 마이크 버튼 소리 크기 표시', /라4|A4/.test(r.heard) && parseFloat(r.lvl) > 0.5, JSON.stringify([r.heard, r.lvl]));
+    ok('태블릿 가로(1180×820): 피아노가 화면 절반 이상, 설정은 서랍, 악보 한 줄', r.pianoShare >= 0.5 && r.sideFixed === 'fixed' && r.line, JSON.stringify([r.pianoShare, r.sideFixed, r.line]));
     ok('페이지 오류 없음', errs.length === 0, errs.join(' | ')); await p.close(); }
 
   // 13) 악보 커서 ↔ 연주 위치 (OSMD 1.8.9 필요): 못갖춘마디·박자 넘침 마디·도돌이표가 있어도 커서가 연주 위치 마디에 있고 뒤로 가지 않음
