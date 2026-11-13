@@ -23,8 +23,10 @@ const STORE_KEY = "gunban-navi-v1";
 const settings = Object.assign({
   rate: 1, mode: "listen", hands: "both", loopOn: false, loopA: 1, loopB: 4, autoSpeed: false,
   accomp: true, guide: false, countIn: true, inputSound: true, volume: 0.8, metro: false,
-  soundSet: "sal", steadyTempo: false, expandRepeats: true, chordLoose: false, micChord: true, sideCollapsed: false, scoreLayout: "line", view: "all", labels: "sol", fingers: true, range: "fit", zoom: 1, scoreZoom: 0.8, kbBase: 60
+  soundSet: "sal", steadyTempo: false, expandRepeats: true, chordLoose: false, micChord: true, sideCollapsed: false, scoreLayout: "line", fallNotes: false, view: "all", labels: "sol", fingers: true, range: "fit", zoom: 1, scoreZoom: 0.8, kbBase: 60
 }, (() => { try { return JSON.parse(localStorage.getItem(STORE_KEY) || "{}"); } catch (e) { return {}; } })());
+// 예전 "악보 + 건반(노트 없이)" 보기는 이제 기본 화면(내려오는 음표 끔)과 같다
+if (settings.view === "score") { settings.view = "all"; settings.fallNotes = false; }
 function saveSettings() { try { localStorage.setItem(STORE_KEY, JSON.stringify(settings)); } catch (e) {} }
 
 /* ============================================================
@@ -1225,11 +1227,11 @@ const Score = {
   async show(xml) {
     const token = ++this.token; this.ready = false; this.steps = []; this.idx = -1; this.xml = xml;
     $("#osmd").innerHTML = ""; this.clearShades();
-    if (!xml) { this.note("MIDI 파일은 악보 그림 없이 떨어지는 음표와 건반으로 보여 드려요."); return; }
+    if (!xml) { this.note("MIDI 파일은 악보 그림 없이 건반 안내로 보여 드려요."); return; }
     this.note("악보를 그리는 중…");
     const lib = await this.loadLib();
     if (token !== this.token) return;
-    if (!lib) { this.note("악보 그림 도구를 불러오지 못했어요. 인터넷 연결을 확인해 주세요. 떨어지는 음표와 건반은 그대로 쓸 수 있어요."); return; }
+    if (!lib) { this.note("악보 그림 도구를 불러오지 못했어요. 인터넷 연결을 확인해 주세요. 건반 안내는 그대로 쓸 수 있어요."); return; }
     // 악보 인식 결과에는 그림 도구가 못 그리는 표시(짝 없는 8va 등)가 섞일 수 있다 → 그리기용으로만 단계적으로 덜어 내고 다시 시도
     const variants = [xml, xml.replace(/<direction\b[^>]*>(?:(?!<\/direction>)[\s\S])*?<octave-shift\b[\s\S]*?<\/direction>/g, ""),
       xml.replace(/<direction\b[\s\S]*?<\/direction>/g, "").replace(/<(slur|tied|tuplet|wedge|ornaments|arpeggiate)\b[^>]*\/>/g, "")];
@@ -1261,7 +1263,7 @@ const Score = {
       }
     }
     $("#osmd").innerHTML = "";
-    this.note("이 악보는 그림으로 그리지 못했어요. 떨어지는 음표와 건반으로 연습할 수 있어요.");
+    this.note("이 악보는 그림으로 그리지 못했어요. 건반 안내로 연습할 수 있어요.");
   },
   buildSteps() {
     // 악보 커서가 갈 수 있는 위치 목록. k = 처음부터 moveToNext()를 몇 번 해야 그 위치인지.
@@ -1344,17 +1346,29 @@ const Score = {
     return -1;
   },
   // 한 줄 악보는 악보 높이만큼만 자리를 차지하게 (남는 자리는 피아노에)
-  fitHeight() {
-    const app = $("#app"), host = $("#osmd"); if (settings.scoreLayout === "page") { app.style.removeProperty("--score-line-h"); host.style.marginTop = ""; return; }
+  fitHeight(again) {
+    const app = $("#app"), host = $("#osmd");
+    if (settings.scoreLayout === "page") { app.style.removeProperty("--score-line-h"); host.style.marginTop = ""; if (this.osmd && Math.abs(this.osmd.zoom - settings.scoreZoom) > 0.01) this.rezoom(settings.scoreZoom); return; }
     const svg = $("#osmd svg"); if (!svg) return;
     try {
       // 악보 그림 위아래 빈 여백을 빼고, 실제 오선·음표가 있는 높이만큼만
       const vb = svg.viewBox && svg.viewBox.baseVal, rh = svg.getBoundingClientRect().height, sc = vb && vb.height ? rh / vb.height : 1, bb = svg.getBBox();
       const top = Math.max(0, bb.y * sc - 6), bottom = (bb.y + bb.height) * sc + 6;
-      host.style.marginTop = -top + "px";
+      // 기본 화면(내려오는 음표 끔)에서 악보 칸이 한 줄보다 훨씬 크면 악보를 키워서 채운다 (최대 1.7배)
+      const pane = $("#scoreScroll").clientHeight, ch = bottom - top;
+      if (!again && this.osmd && ch > 40) {
+        const base = settings.scoreZoom, ez = this.osmd.zoom || base;
+        // 넓고 높은 칸에서는 키우고(폭이 좁으면 덜), 한 줄이 다 안 들어가는 낮은 칸(휴대폰 가로)에서는 줄여서 두 단이 모두 보이게
+        const maxF = clamp($("#scoreScroll").clientWidth / 520, 1, 1.7);
+        const want = !settings.fallNotes && settings.view !== "keys" && pane > 50 ? clamp(ez * (pane * 0.92) / ch, base * 0.6, base * maxF) : base;
+        if (Math.abs(want - ez) / ez > 0.07) { this.rezoom(want); return this.fitHeight(true); }
+      }
+      const room = pane - ch; // 악보 칸이 더 크면(기본 화면) 세로 가운데에
+      host.style.marginTop = (-top + Math.max(0, room / 2 - 2)) + "px";
       if (bottom - top > 40) { app.style.setProperty("--score-line-h", Math.ceil(bottom - top + 4) + "px"); setTimeout(() => window.dispatchEvent(new Event("resize")), 30); }
     } catch (e) {}
   },
+  rezoom(z) { try { this.osmd.zoom = z; this.osmd.render(); if (this.ready) { this.idx = -1; this.sync(true); this.drawShades(); } } catch (e) {} },
   setZoom(z) { if (!this.ready) return; try { this.osmd.zoom = z; this.osmd.render(); this.fitHeight(); this.idx = -1; this.sync(true); this.drawShades(); } catch (e) {} }
 };
 $("#osmd").addEventListener("click", (e) => {
@@ -1363,7 +1377,7 @@ $("#osmd").addEventListener("click", (e) => {
   if (mi >= 0) { seek(song.measures[nearestPerfOfSrc(mi)].start); toast(`${mi + 1}마디로 이동했어요`); }
 });
 let resizeT = 0;
-new ResizeObserver(() => { clearTimeout(resizeT); resizeT = setTimeout(() => { if (Score.ready) { Score.idx = -1; Score.sync(true); Score.drawShades(); } }, 400); }).observe($("#scoreScroll"));
+new ResizeObserver(() => { clearTimeout(resizeT); resizeT = setTimeout(() => { if (Score.ready) { Score.fitHeight(); Score.idx = -1; Score.sync(true); Score.drawShades(); } }, 400); }).observe($("#scoreScroll"));
 
 /* ============================================================
    11) 낙하 노트 + 건반 렌더러 (캔버스)
@@ -1393,7 +1407,11 @@ function computeRange() {
   }
   const whites = []; for (let m = lo; m <= hi; m++) if (!isBlack(m)) whites.push(m);
   kb = { lo, hi, whites };
+  syncKeyWidth();
 }
+// 흰건반 한 개의 폭을 CSS에 알려 준다 → 건반 높이를 실제 피아노 비율에 맞춤
+function syncKeyWidth() { const w = $("#stage").clientWidth; if (w > 0 && kb.whites.length) $("#app").style.setProperty("--kw", (w / kb.whites.length).toFixed(1) + "px"); }
+new ResizeObserver(syncKeyWidth).observe($("#stage"));
 function keyGeom(m, W) {
   const kw = W / kb.whites.length;
   if (!isBlack(m)) { const i = kb.whites.indexOf(m); return { x: i * kw, w: kw, black: false }; }
@@ -1409,10 +1427,53 @@ function upcomingStep() {
   const i = lowerBound(song.steps, E.pos + 0.001);
   return song.steps[i] || null;
 }
+// 건반에 표시할 음: act = 지금 울리는 음, up = 이제 칠 음(따라치기: 기다리는 음 / 듣기: 곧 나올 음)
+// 내려오는 음표를 끈 기본 화면에서는 미리 보여 주지 않고 "지금 칠 건반"만 알려 준다
+function guideTargets() {
+  const act = new Map(), up = new Map(); if (!song) return { act, up };
+  const from = lowerBound(song.notes, E.pos - song.maxDur - 0.01);
+  for (let i = from; i < song.notes.length; i++) { const n = song.notes[i]; if (n.start > E.pos + 1e-4) break; if (n.end > E.pos && n.start <= E.pos + 1e-4) { if (practiceHas(n.hand) || settings.accomp) act.set(n.midi, n); } }
+  const st = upcomingStep();
+  const ahead = settings.fallNotes ? (st && st.start - E.pos < 1.2) : !E.playing; // 듣기 모드에서 미리 표시할지
+  if (st && (settings.mode === "wait" || ahead)) st.notes.forEach((n) => { if (practiceHas(n.hand)) up.set(n.midi, n); });
+  return { act, up };
+}
+// 기본 화면의 안내 줄: 지금 칠 건반 바로 위에 손가락 번호·음 이름 표식을 세운다 (흰건반은 아랫줄, 검은건반은 윗줄)
+function drawGuide(W, H) {
+  for (let m = kb.lo; m <= kb.hi; m++) if (isBlack(m)) { const g = keyGeom(m, W); fctx.fillStyle = "rgba(255,255,255,.022)"; fctx.fillRect(g.x, 0, g.w, H); }
+  if (!song) return;
+  const { act, up } = guideTargets(); const marks = new Map();
+  if (settings.mode === "wait") up.forEach((n, m) => marks.set(m, n));
+  else { act.forEach((n, m) => { if (practiceHas(n.hand)) marks.set(m, n); }); up.forEach((n, m) => { if (!marks.has(m)) marks.set(m, n); }); }
+  const fam = colors["--f-body"], kw = W / kb.whites.length;
+  const two = H >= 112; const top0 = two && H >= 150 ? 44 : 6; // 위쪽은 안내 문구 자리
+  const ph = clamp(two ? (H - top0 - 18) / 2 : H - 14, 22, 50), gap = 6;
+  const draw = (m, n) => {
+    if (m < kb.lo || m > kb.hi) return; const g = keyGeom(m, W), cx = g.x + g.w / 2, col = handColor(n.hand);
+    const done = settings.mode === "wait" && E.hits.has(m);
+    const pw = clamp(kw * 0.8, 26, 58) - (g.black && !two ? 6 : 0);
+    const y = g.black && two ? H - 8 - ph - gap - ph : H - 8 - ph;
+    fctx.globalAlpha = done ? 0.3 : 1;
+    // 건반으로 내려가는 빛줄기
+    const beam = fctx.createLinearGradient(0, 0, 0, H); beam.addColorStop(0, "rgba(0,0,0,0)"); beam.addColorStop(1, col);
+    fctx.save(); fctx.globalAlpha *= 0.2; fctx.fillStyle = beam; fctx.fillRect(g.x + (g.black ? 0 : 1), 0, g.w - (g.black ? 0 : 2), H); fctx.restore();
+    fctx.fillStyle = col; fctx.fillRect(cx - 1.5, y + ph - 2, 3, H - (y + ph) + 2);
+    fctx.beginPath(); fctx.moveTo(cx - 6, H - 7); fctx.lineTo(cx + 6, H - 7); fctx.lineTo(cx, H); fctx.closePath(); fctx.fill();
+    roundRect(fctx, cx - pw / 2, y, pw, ph, Math.min(12, ph / 3)); fctx.fill();
+    if (g.black) { fctx.strokeStyle = "rgba(0,0,0,.55)"; fctx.lineWidth = 2; roundRect(fctx, cx - pw / 2 + 2, y + 2, pw - 4, ph - 4, Math.min(10, ph / 3)); fctx.stroke(); }
+    const name = settings.labels !== "off" ? noteName(m, settings.labels) : "", fin = settings.fingers && n.finger ? String(n.finger) : "";
+    fctx.fillStyle = "#0b0f17"; fctx.textAlign = "center"; fctx.textBaseline = "middle";
+    if (fin && name && ph >= 40) { fctx.font = `700 ${Math.round(ph * 0.42)}px ${fam}`; fctx.fillText(fin, cx, y + ph * 0.36); fctx.font = `600 ${Math.round(ph * 0.24)}px ${fam}`; fctx.fillText(name, cx, y + ph * 0.76); }
+    else { const t = fin || name; if (t) { fctx.font = `700 ${Math.round(Math.min(ph * 0.5, pw * 0.5))}px ${fam}`; fctx.fillText(t, cx, y + ph / 2 + 1); } }
+    fctx.textAlign = "left"; fctx.textBaseline = "alphabetic"; fctx.globalAlpha = 1;
+  };
+  marks.forEach((n, m) => { if (!isBlack(m)) draw(m, n); }); marks.forEach((n, m) => { if (isBlack(m)) draw(m, n); });
+}
 function drawFall() {
   if (fall.offsetParent === null) return;
   const { w: W, h: H } = sizeCanvas(fall, fctx);
   fctx.fillStyle = colors["--stage"]; fctx.fillRect(0, 0, W, H);
+  if (!settings.fallNotes) { drawGuide(W, H); return; }
   if (!song) return;
   const pps = settings.zoom * Math.max(90, H / 3.2);
   const hitY = H - 1;
@@ -1463,13 +1524,7 @@ function drawKeys() {
   const { w: W, h: H } = sizeCanvas(keysC, kctx);
   kctx.fillStyle = colors["--stage"]; kctx.fillRect(0, 0, W, H);
   const now = performance.now();
-  const act = new Map();
-  if (song) {
-    const from = lowerBound(song.notes, E.pos - song.maxDur - 0.01);
-    for (let i = from; i < song.notes.length; i++) { const n = song.notes[i]; if (n.start > E.pos + 1e-4) break; if (n.end > E.pos && n.start <= E.pos + 1e-4) { if (practiceHas(n.hand) || settings.accomp) act.set(n.midi, n); } }
-  }
-  const up = upcomingStep(); const upMap = new Map();
-  if (up && (settings.mode === "wait" || (up.start - E.pos) < 1.2)) up.notes.forEach((n) => { if (practiceHas(n.hand)) upMap.set(n.midi, n); });
+  const { act, up: upMap } = guideTargets(); const solid = !settings.fallNotes; // 기본 화면: 칠 건반을 색으로 꽉 채워 알려 줌
   // 건반 바로 위 붉은 펠트 띠 (실제 피아노처럼), 그 아래 건반
   const F = 6; kctx.fillStyle = "#a1283b"; kctx.fillRect(0, 0, W, F); kctx.fillStyle = "rgba(0,0,0,.35)"; kctx.fillRect(0, F - 1, W, 1);
   kctx.save(); kctx.translate(0, F);
@@ -1484,13 +1539,18 @@ function drawKeys() {
     const pc = pressColor(m); const a = act.get(m); const u = upMap.get(m);
     kctx.fillStyle = pc || (a && (settings.mode !== "wait" || !practiceHas(a.hand)) ? handColor(a.hand) : ivory);
     keyShape(kctx, g.x + 1, 0, g.w - 2, whiteH, Math.min(6, g.w / 4)); kctx.fill();
-    if (u && !pc) { kctx.strokeStyle = handColor(u.hand); kctx.lineWidth = 3; roundRect(kctx, g.x + 2.5, 1.5, g.w - 5, whiteH - 3, 5); kctx.stroke(); kctx.fillStyle = handColor(u.hand); kctx.globalAlpha = 0.22; roundRect(kctx, g.x + 2.5, 1.5, g.w - 5, whiteH - 3, 5); kctx.fill(); kctx.globalAlpha = 1; }
+    if (u && !pc) {
+      const done = settings.mode === "wait" && E.hits.has(m);
+      if (solid && !done) { kctx.fillStyle = handColor(u.hand); keyShape(kctx, g.x + 1, 0, g.w - 2, whiteH, Math.min(6, g.w / 4)); kctx.fill(); const sh = kctx.createLinearGradient(0, whiteH * 0.8, 0, whiteH); sh.addColorStop(0, "rgba(0,0,0,0)"); sh.addColorStop(1, "rgba(0,0,0,.16)"); kctx.fillStyle = sh; keyShape(kctx, g.x + 1, 0, g.w - 2, whiteH, Math.min(6, g.w / 4)); kctx.fill(); }
+      else { kctx.strokeStyle = handColor(u.hand); kctx.lineWidth = 3; roundRect(kctx, g.x + 2.5, 1.5, g.w - 5, whiteH - 3, 5); kctx.stroke(); kctx.fillStyle = handColor(u.hand); kctx.globalAlpha = 0.22; roundRect(kctx, g.x + 2.5, 1.5, g.w - 5, whiteH - 3, 5); kctx.fill(); kctx.globalAlpha = 1; }
+    }
     if (m === 60) { kctx.fillStyle = "#c7cbd3"; kctx.beginPath(); kctx.arc(g.x + g.w / 2, whiteH - 34, 2.5, 0, 7); kctx.fill(); }
     if (settings.labels !== "off" && g.w > 13) {
-      kctx.fillStyle = u ? "#111" : "#8a909b"; kctx.textAlign = "center"; kctx.font = `${u ? 600 : 500} ${Math.min(13, g.w * 0.42)}px ${fam}`;
+      const lit = u || (solid && a && settings.mode !== "wait" && practiceHas(a.hand)); // 지금 칠(울리는) 건반은 이름을 크고 진하게
+      kctx.fillStyle = lit ? "#111" : "#8a909b"; kctx.textAlign = "center"; kctx.font = `${lit ? 700 : 500} ${Math.min(lit && solid ? 17 : 13, g.w * 0.42)}px ${fam}`;
       kctx.fillText(noteName(m, settings.labels), g.x + g.w / 2, whiteH - 10);
     }
-    if (u && settings.fingers && u.finger) { badge(kctx, g.x + g.w / 2, whiteH - 52, String(u.finger), handColor(u.hand), fam); }
+    if (u && settings.fingers && u.finger && !solid) { badge(kctx, g.x + g.w / 2, whiteH - 52, String(u.finger), handColor(u.hand), fam); }
   });
   // 검은건반
   for (let m = kb.lo; m <= kb.hi; m++) {
@@ -1499,9 +1559,12 @@ function drawKeys() {
     kctx.fillStyle = pc || (a && (settings.mode !== "wait" || !practiceHas(a.hand)) ? handColor(a.hand) : ebony);
     keyShape(kctx, g.x, 0, g.w, blackH, Math.min(3, g.w / 4)); kctx.fill();
     if (!pc && !a) { kctx.fillStyle = "rgba(255,255,255,.13)"; kctx.fillRect(g.x + 2, blackH * 0.86, g.w - 4, Math.max(2, blackH * 0.06)); } // 검은건반 앞면 빛
-    if (u && !pc) { kctx.strokeStyle = handColor(u.hand); kctx.lineWidth = 3; roundRect(kctx, g.x + 1.5, 1.5, g.w - 3, blackH - 3, 3); kctx.stroke(); }
-    if (u && settings.labels !== "off" && g.w > 9) { kctx.fillStyle = "#fff"; kctx.textAlign = "center"; kctx.font = `600 ${Math.min(11, g.w * 0.5)}px ${fam}`; kctx.fillText(noteName(m, settings.labels), g.x + g.w / 2, blackH - 8); }
-    if (u && settings.fingers && u.finger) badge(kctx, g.x + g.w / 2, blackH + 14, String(u.finger), handColor(u.hand), fam);
+    else { kctx.strokeStyle = "rgba(0,0,0,.6)"; kctx.lineWidth = 1.5; keyShape(kctx, g.x + 0.75, 0, g.w - 1.5, blackH - 0.75, Math.min(3, g.w / 4)); kctx.stroke(); }
+    const fillB = u && !pc && solid && !(settings.mode === "wait" && E.hits.has(m));
+    if (fillB) { kctx.fillStyle = handColor(u.hand); keyShape(kctx, g.x, 0, g.w, blackH, Math.min(3, g.w / 4)); kctx.fill(); kctx.strokeStyle = "rgba(0,0,0,.6)"; kctx.lineWidth = 1.5; keyShape(kctx, g.x + 0.75, 0, g.w - 1.5, blackH - 0.75, Math.min(3, g.w / 4)); kctx.stroke(); }
+    else if (u && !pc) { kctx.strokeStyle = handColor(u.hand); kctx.lineWidth = 3; roundRect(kctx, g.x + 1.5, 1.5, g.w - 3, blackH - 3, 3); kctx.stroke(); }
+    if (u && settings.labels !== "off" && g.w > 9) { kctx.fillStyle = fillB ? "#0b0f17" : "#fff"; kctx.textAlign = "center"; kctx.font = `600 ${Math.min(11, g.w * 0.5)}px ${fam}`; kctx.fillText(noteName(m, settings.labels), g.x + g.w / 2, blackH - 8); }
+    if (u && settings.fingers && u.finger && !solid) badge(kctx, g.x + g.w / 2, blackH + 14, String(u.finger), handColor(u.hand), fam);
   }
   kctx.textAlign = "left"; kctx.restore();
 }
@@ -1522,10 +1585,10 @@ const ptrUp = (e) => { if (!ptrNotes.has(e.pointerId)) return; Input.off(ptrNote
 keysC.addEventListener("pointerup", ptrUp); keysC.addEventListener("pointercancel", ptrUp);
 // 낙하 영역 드래그로 위치 이동
 let drag = null;
-fall.addEventListener("pointerdown", (e) => { if (!song) return; fall.setPointerCapture(e.pointerId); drag = { y: e.clientY, pos: E.pos, was: E.playing }; if (E.playing) pause(); });
+fall.addEventListener("pointerdown", (e) => { if (!song || !settings.fallNotes) return; fall.setPointerCapture(e.pointerId); drag = { y: e.clientY, pos: E.pos, was: E.playing }; if (E.playing) pause(); });
 fall.addEventListener("pointermove", (e) => { if (!drag) return; const H = fall.getBoundingClientRect().height; const pps = settings.zoom * Math.max(90, H / 3.2); seek(drag.pos + (e.clientY - drag.y) / pps); });
 const dragEnd = () => { drag = null; }; fall.addEventListener("pointerup", dragEnd); fall.addEventListener("pointercancel", dragEnd);
-fall.addEventListener("wheel", (e) => { if (!song) return; e.preventDefault(); seek(E.pos - e.deltaY / 400); }, { passive: false });
+fall.addEventListener("wheel", (e) => { if (!song || !settings.fallNotes) return; e.preventDefault(); seek(E.pos - e.deltaY / 400); }, { passive: false });
 
 /* ============================================================
    12) 메인 루프
@@ -1600,7 +1663,10 @@ function setLoop(on) {
 function setLoopRange(a, b) { $("#loopA").value = a; $("#loopB").value = b; setLoop(true); toast(a === b ? `${a}마디를 반복해요` : `${a}~${b}마디를 반복해요`); }
 function stepMeasure(d) { if (!song) return; const mi = clamp(measureAt(E.pos) + d, 0, song.measures.length - 1); seek(song.measures[mi].start); }
 function restart() { if (!song) return; const lr = loopRange(); seek(lr ? lr.start : 0, false, "restart"); E.mistakes = 0; E.correct = 0; E.loops = 0; E.passMistakes = 0; updateStats(); }
-function applyView() { const app = $("#app"); app.classList.toggle("view-keys", settings.view === "keys"); app.classList.toggle("view-score", settings.view === "score"); setTimeout(() => { if (Score.ready) { Score.idx = -1; Score.sync(true); } }, 50); }
+function applyView() { const app = $("#app"); app.classList.toggle("view-keys", settings.view === "keys"); app.classList.toggle("keys-first", !settings.fallNotes);
+  const zr = $("#zoomRow"); if (zr) zr.hidden = !settings.fallNotes;
+  fall.setAttribute("aria-label", settings.fallNotes ? "내려오는 음표. 위아래로 끌어서 위치를 옮길 수 있어요" : "지금 칠 건반 안내"); syncKeyWidth();
+  setTimeout(() => { if (Score.ready) Score.fitHeight(); }, 60); setTimeout(() => { if (Score.ready) { Score.idx = -1; Score.sync(true); } }, 50); }
 
 $("#playBtn").onclick = togglePlay;
 $("#restartBtn").onclick = restart;
@@ -1640,6 +1706,7 @@ function toggleFullscreen() {
 if (!(fsEl.requestFullscreen || fsEl.webkitRequestFullscreen)) $("#fsBtn").hidden = true;
 $("#fsBtn").onclick = toggleFullscreen;
 ["fullscreenchange", "webkitfullscreenchange"].forEach((ev) => document.addEventListener(ev, () => { $("#fsBtn").setAttribute("aria-pressed", String(fsOn())); setTimeout(() => window.dispatchEvent(new Event("resize")), 60); }));
+bindSwitch("fallNotes", "fallNotes", () => { applyView(); toast(settings.fallNotes ? "음표가 건반 위로 미리 내려와요" : "지금 칠 건반만 알려 줘요"); });
 $("#viewSel").value = settings.view; $("#viewSel").onchange = (e) => { settings.view = e.target.value; applyView(); saveSettings(); };
 $("#labelSel").value = settings.labels; $("#labelSel").onchange = (e) => { settings.labels = e.target.value; saveSettings(); };
 $("#rangeSel").value = settings.range; $("#rangeSel").onchange = (e) => { settings.range = e.target.value; computeRange(); saveSettings(); };
@@ -2603,6 +2670,6 @@ function boot() {
   if (matchMedia("(pointer: coarse)").matches) $("#hintKeys").hidden = true;
   requestAnimationFrame(frame);
 }
-window.GunbanNavi = { parseMusicXML, parseMIDI, jsonToMusicXML, buildSong, mxlToXml, get song() { return song; }, E, settings, ODE, seek, play, pause, userNoteOn, setMode, setHands, setLoopRange, setRate, Score, PosLog, loopRange, repeatOrder, Input, Mic, createMicAnalyzer };
+window.GunbanNavi = { parseMusicXML, parseMIDI, jsonToMusicXML, buildSong, mxlToXml, get song() { return song; }, E, settings, ODE, seek, play, pause, userNoteOn, setMode, setHands, setLoopRange, setRate, Score, PosLog, loopRange, repeatOrder, Input, Mic, createMicAnalyzer, guideTargets };
 window.loopRangeForTest = () => loopRange();
 boot();

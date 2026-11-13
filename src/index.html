@@ -52,8 +52,8 @@
         <div class="orig-view" id="origView" hidden></div>
       </div>
     </section>
-    <section class="stage" id="stage" aria-label="떨어지는 음표와 건반">
-      <canvas id="fall" aria-label="떨어지는 음표. 위아래로 끌어서 위치를 옮길 수 있어요"></canvas>
+    <section class="stage" id="stage" aria-label="칠 건반 안내와 건반">
+      <canvas id="fall" aria-label="지금 칠 건반 안내"></canvas>
       <canvas id="keys" aria-label="피아노 건반. 눌러서 연주할 수 있어요"></canvas>
       <div class="hint-keys" id="hintKeys">PC 키보드: A~K = 도~도 · Z/X 옥타브 · Space 재생</div>
       <div class="heard" id="heard" role="status" hidden></div>
@@ -147,8 +147,9 @@
 
     <div class="sec">
       <h3>보기</h3>
+      <div class="row"><label for="fallNotes">내려오는 음표<div class="sub">켜면 음표가 건반 위로 미리 내려와요. 꺼 두면 지금 칠 건반만 알려 줘요</div></label><span class="switch"><input type="checkbox" id="fallNotes"></span></div>
       <div class="row"><span>화면</span>
-        <select id="viewSel" aria-label="화면 구성"><option value="all">악보 + 건반</option><option value="keys">건반만 크게</option><option value="score">악보 + 건반(노트 없이)</option></select></div>
+        <select id="viewSel" aria-label="화면 구성"><option value="all">악보 + 건반</option><option value="keys">건반만 크게</option></select></div>
       <div class="row"><span>악보 보기<div class="sub">한 줄로 흐르게 하면 악보가 옆으로 지나가요</div></span>
         <select id="scoreLayoutSel" aria-label="악보 보기"><option value="line">한 줄로 흐르게</option><option value="page">여러 줄 (페이지)</option></select></div>
       <div class="row"><span>음 이름</span>
@@ -156,7 +157,7 @@
       <div class="row"><label for="fingers">손가락 번호 (악보에 있으면)</label><span class="switch"><input type="checkbox" id="fingers" checked></span></div>
       <div class="row"><span>건반 범위</span>
         <select id="rangeSel" aria-label="건반 범위"><option value="fit">곡에 맞춤</option><option value="61">61건반</option><option value="88">88건반</option></select></div>
-      <div class="row"><label for="zoom">노트 간격</label><input type="range" id="zoom" min="50" max="220" value="100" style="width:120px;accent-color:var(--accent)"></div>
+      <div class="row" id="zoomRow"><label for="zoom">내려오는 음표 간격</label><input type="range" id="zoom" min="50" max="220" value="100" style="width:120px;accent-color:var(--accent)"></div>
       <div class="row"><label for="scoreZoom">악보 크기</label><input type="range" id="scoreZoom" min="50" max="140" value="80" style="width:120px;accent-color:var(--accent)"></div>
     </div>
 
@@ -171,7 +172,7 @@
     <div class="sec">
       <h3>처음 쓰는 분께</h3>
       <ol class="steps">
-        <li><b>듣기</b>로 한 번 들으면서 떨어지는 음표가 어느 건반에 닿는지 봐요.</li>
+        <li><b>듣기</b>로 한 번 들으면서 어느 건반에 색이 켜지는지 봐요.</li>
         <li>속도를 <b>50%</b>로 낮추고 <b>오른손</b>만, <b>따라치기</b>를 켜요. 맞는 건반을 누를 때까지 기다려 줘요.</li>
         <li>어려운 곳은 <b>구간 반복</b>으로 2마디씩 연습하고, 익숙해지면 양손으로 합쳐요.</li>
       </ol>
