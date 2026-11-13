@@ -9,12 +9,14 @@ const OSMD = path.resolve(__dirname, '.cache', 'osmd-1.8.9.min.js');
   for (const name of ['iPad (gen 7) landscape', 'iPad (gen 7)']) {
     const ctx = await b.newContext({ ...devices[name] }); const p = await ctx.newPage(); const errs = []; p.on('pageerror', (e) => errs.push(e.message));
     await p.addInitScript(() => {
-      navigator.mediaDevices = navigator.mediaDevices || {};
-      navigator.mediaDevices.getUserMedia = async () => {
+      const fakeGUM = async () => {
         const AC = window.AudioContext || window.webkitAudioContext; const ac = new AC(); const dst = ac.createMediaStreamDestination(); const t0 = ac.currentTime + 0.3;
         for (let k = 0; k < 4; k++) { const o = ac.createOscillator(); o.frequency.value = 261.63; const g = ac.createGain(); g.gain.setValueAtTime(0, 0); g.gain.setValueAtTime(0, t0 + k * 0.5); g.gain.linearRampToValueAtTime(0.05, t0 + k * 0.5 + 0.005); g.gain.exponentialRampToValueAtTime(0.002, t0 + k * 0.5 + 0.45); g.gain.setValueAtTime(0, t0 + k * 0.5 + 0.46); o.connect(g); g.connect(dst); o.start(); }
-        return dst.stream;
+        window.__fakeUsed = (window.__fakeUsed || 0) + 1; return dst.stream;
       };
+      // 사파리 엔진은 단순 대입으로는 안 바뀌어 속성을 다시 정의한다
+      try { Object.defineProperty(MediaDevices.prototype, 'getUserMedia', { value: fakeGUM, configurable: true, writable: true }); } catch (e) {}
+      try { if (!navigator.mediaDevices) Object.defineProperty(navigator, 'mediaDevices', { value: { getUserMedia: fakeGUM }, configurable: true }); else Object.defineProperty(navigator.mediaDevices, 'getUserMedia', { value: fakeGUM, configurable: true, writable: true }); } catch (e) {}
     });
     await p.route('**/*', (r) => { const u = r.request().url(); if (u.includes('opensheetmusicdisplay') && fs.existsSync(OSMD)) return r.fulfill({ body: fs.readFileSync(OSMD), contentType: 'application/javascript' }); return u.startsWith('file:') ? r.continue() : r.abort(); });
     await p.goto(PAGE); await p.waitForTimeout(3000);
@@ -22,7 +24,7 @@ const OSMD = path.resolve(__dirname, '.cache', 'osmd-1.8.9.min.js');
     ok(`[${name}] 화면 배치 · 악보 그림`, lay.piano >= 0.45 && !lay.scroll && (lay.score || !fs.existsSync(OSMD)), JSON.stringify(lay));
     await p.tap('#micQuick'); await p.waitForTimeout(3200);
     const mic = await p.evaluate(() => ({ on: GunbanNavi.Mic.on, mode: GunbanNavi.Mic.mode, err: GunbanNavi.Mic.lastError || null, worklet: GunbanNavi.Mic.workletError || null, fixes: GunbanNavi.Mic.fixes, n: GunbanNavi.Input.seq, stats: GunbanNavi.Mic.stats, status: document.querySelector('#micStatus').textContent, sr: Sound.ctx && Sound.ctx.sampleRate, state: Sound.ctx && Sound.ctx.state,
-      env: { secure: window.isSecureContext, md: !!navigator.mediaDevices, msd: typeof (window.AudioContext || window.webkitAudioContext).prototype.createMediaStreamDestination, mss: typeof (window.AudioContext || window.webkitAudioContext).prototype.createMediaStreamSource, awn: typeof window.AudioWorkletNode } }));
+      env: { fake: window.__fakeUsed || 0, secure: window.isSecureContext, md: !!navigator.mediaDevices, msd: typeof (window.AudioContext || window.webkitAudioContext).prototype.createMediaStreamDestination, mss: typeof (window.AudioContext || window.webkitAudioContext).prototype.createMediaStreamSource, awn: typeof window.AudioWorkletNode } }));
     console.log(`INFO [${name}] 마이크 ${JSON.stringify(mic)}`);
     ok(`[${name}] 가짜 마이크: 켜지고 소리를 받음`, mic.on && mic.stats && mic.stats.blocks > 10, JSON.stringify({ mode: mic.mode, blocks: mic.stats && mic.stats.blocks }));
     ok(`[${name}] 가짜 마이크: 4번 친 소리 → 입력 4번`, mic.n === 4, `${mic.n}번 (${mic.mode})`);

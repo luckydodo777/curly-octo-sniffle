@@ -480,6 +480,12 @@ async function openPage(browser, opts = {}) {
     const w = await p2.evaluate(async () => { const G = GunbanNavi; await G.Mic.start(); await new Promise((r) => setTimeout(r, 5600));
       const out = { fixes: G.Mic.fixes.slice(), mode: G.Mic.mode, status: document.querySelector('#micStatus').textContent }; G.Mic.stop(); out.ownAfterStop = !!G.Mic.ownCtx; return out; });
     ok('무음 마이크: 마이크 전용 오디오로 다시 연결해 보고, 그래도 0이면 진단 복사 안내', w.fixes.includes('ownctx') && /ownctx/.test(w.mode) && /들어오지 않아요/.test(w.status) && !w.ownAfterStop, JSON.stringify([w.fixes, w.mode, w.status.slice(0, 30)]));
+    const p3 = await b2.newPage();
+    await p3.addInitScript(() => { navigator.mediaDevices.getUserMedia = async (c) => { if (c && typeof c.audio === 'object') throw Object.assign(new Error('Invalid constraint'), { name: 'OverconstrainedError' }); const ac = new AudioContext(); return ac.createMediaStreamDestination().stream; }; });
+    await p3.route('**/*', (r) => (r.request().url().startsWith('file:') ? r.continue() : r.abort()));
+    await p3.goto(PAGE); await p3.waitForTimeout(800);
+    const oc = await p3.evaluate(async () => { const G = GunbanNavi; await G.Mic.start(); const out = { on: G.Mic.on, fixes: G.Mic.fixes.slice() }; G.Mic.stop(); return out; });
+    ok('마이크 조건을 못 받는 기기(OverconstrainedError): 기본 설정으로 다시 켬', oc.on && oc.fixes[0] === 'plain:OverconstrainedError', JSON.stringify(oc));
     ok('페이지 오류 없음 (무음 마이크)', errs2.length === 0, errs2.join(' | '));
     await b2.close(); }
 

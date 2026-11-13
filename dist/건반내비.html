@@ -1545,7 +1545,9 @@ const Mic = {
     try {
       Sound.ensure();
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw Object.assign(new Error("no mediaDevices"), { name: "NoMediaDevices" });
-      this.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+      // 소리 보정(울림 제거·잡음 제거·자동 음량)을 끄고 받는 게 정확하지만, 그 조건을 못 받는 기기는 기본 설정으로 다시 시도
+      try { this.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } }); }
+      catch (e1) { if (e1 && (e1.name === "NotAllowedError" || e1.name === "NotFoundError")) throw e1; this.fixes.push("plain:" + ((e1 && e1.name) || "Error")); this.stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
     } catch (e) {
       const n = (e && e.name) || "Error"; this.lastError = `${n}: ${String(e && e.message || "").slice(0, 100)}`;
       const ios = this.isIOS();
