@@ -21,7 +21,8 @@ const OSMD = path.resolve(__dirname, '.cache', 'osmd-1.8.9.min.js');
     const lay = await p.evaluate(() => { const h = (s) => document.querySelector(s).getBoundingClientRect().height; return { w: innerWidth, h: innerHeight, piano: +((h('#fall') + h('#keys')) / innerHeight).toFixed(2), score: Score.ready, scroll: document.documentElement.scrollWidth > innerWidth }; });
     ok(`[${name}] 화면 배치 · 악보 그림`, lay.piano >= 0.45 && !lay.scroll && (lay.score || !fs.existsSync(OSMD)), JSON.stringify(lay));
     await p.tap('#micQuick'); await p.waitForTimeout(3200);
-    const mic = await p.evaluate(() => ({ on: GunbanNavi.Mic.on, mode: GunbanNavi.Mic.mode, err: GunbanNavi.Mic.workletError || null, n: GunbanNavi.Input.seq, stats: GunbanNavi.Mic.stats, status: document.querySelector('#micStatus').textContent, sr: Sound.ctx && Sound.ctx.sampleRate }));
+    const mic = await p.evaluate(() => ({ on: GunbanNavi.Mic.on, mode: GunbanNavi.Mic.mode, err: GunbanNavi.Mic.lastError || null, worklet: GunbanNavi.Mic.workletError || null, fixes: GunbanNavi.Mic.fixes, n: GunbanNavi.Input.seq, stats: GunbanNavi.Mic.stats, status: document.querySelector('#micStatus').textContent, sr: Sound.ctx && Sound.ctx.sampleRate, state: Sound.ctx && Sound.ctx.state,
+      env: { secure: window.isSecureContext, md: !!navigator.mediaDevices, msd: typeof (window.AudioContext || window.webkitAudioContext).prototype.createMediaStreamDestination, mss: typeof (window.AudioContext || window.webkitAudioContext).prototype.createMediaStreamSource, awn: typeof window.AudioWorkletNode } }));
     console.log(`INFO [${name}] 마이크 ${JSON.stringify(mic)}`);
     ok(`[${name}] 가짜 마이크: 켜지고 소리를 받음`, mic.on && mic.stats && mic.stats.blocks > 10, JSON.stringify({ mode: mic.mode, blocks: mic.stats && mic.stats.blocks }));
     ok(`[${name}] 가짜 마이크: 4번 친 소리 → 입력 4번`, mic.n === 4, `${mic.n}번 (${mic.mode})`);

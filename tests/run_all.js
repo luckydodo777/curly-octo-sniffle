@@ -472,6 +472,15 @@ async function openPage(browser, opts = {}) {
     ok('마이크 전체 흐름: 4번 친 소리 → 입력 4번 (워클릿·워커)', r.n === 4 && /worker\+worklet/.test(r.mode), JSON.stringify([r.mode, r.err, r.n]));
     ok('마이크 켜는 동안 앱 소리 끄고, 끄면 되돌림 · 음역 표시', JSON.stringify(r.offWhileOn) === '[false,false]' && JSON.stringify(r.restored) === '[true,true]' && /1400Hz/.test(r.status), JSON.stringify([r.offWhileOn, r.restored, r.status]));
     ok('페이지 오류 없음 (마이크)', errs.length === 0, errs.join(' | '));
+    // 소리가 완전히 0인 마이크(실기기에서 장치·샘플레이트가 안 맞을 때 등): 스스로 마이크 전용 오디오로 바꿔 보고, 그래도 0이면 안내
+    const p2 = await b2.newPage(); const errs2 = []; p2.on('pageerror', (e) => errs2.push(e.message));
+    await p2.addInitScript(() => { navigator.mediaDevices.getUserMedia = async () => { const ac = new AudioContext(); return ac.createMediaStreamDestination().stream; }; });
+    await p2.route('**/*', (r) => (r.request().url().startsWith('file:') ? r.continue() : r.abort()));
+    await p2.goto(PAGE); await p2.waitForTimeout(800);
+    const w = await p2.evaluate(async () => { const G = GunbanNavi; await G.Mic.start(); await new Promise((r) => setTimeout(r, 5600));
+      const out = { fixes: G.Mic.fixes.slice(), mode: G.Mic.mode, status: document.querySelector('#micStatus').textContent }; G.Mic.stop(); out.ownAfterStop = !!G.Mic.ownCtx; return out; });
+    ok('무음 마이크: 마이크 전용 오디오로 다시 연결해 보고, 그래도 0이면 진단 복사 안내', w.fixes.includes('ownctx') && /ownctx/.test(w.mode) && /들어오지 않아요/.test(w.status) && !w.ownAfterStop, JSON.stringify([w.fixes, w.mode, w.status.slice(0, 30)]));
+    ok('페이지 오류 없음 (무음 마이크)', errs2.length === 0, errs2.join(' | '));
     await b2.close(); }
 
   // 15) 화음 판정 (이슈 #14 PR 4): 0.2초 안에 함께 쳐야 맞음, 한 음씩 인정 설정, 마이크 화음
