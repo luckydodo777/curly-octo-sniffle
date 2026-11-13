@@ -182,6 +182,8 @@ ol.steps b{color:var(--ink)}
 .omr-dot{width:8px;height:8px;border-radius:50%;background:var(--accent);flex:none;animation:omrpulse 1.2s ease-in-out infinite}
 .omr-chip.ok .omr-dot{background:var(--ok);animation:none}.omr-chip.bad .omr-dot{background:var(--bad);animation:none}
 @keyframes omrpulse{50%{opacity:.25}}
+.omr-chip #omrChipOpen{border:1px solid var(--accent);color:var(--accent);background:transparent;font-size:13px;padding:2px 10px;border-radius:6px}
+.omr-chip #omrChipOpen[hidden]{display:none}
 </style>
 
 <div class="app" id="app">
@@ -190,7 +192,7 @@ ol.steps b{color:var(--ink)}
       <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><b style="left:4px"></b><b style="left:10px"></b><b style="left:22px"></b></span>
       건반 내비
     </div>
-    <div class="omr-chip" id="omrChip" role="status" hidden><span class="omr-dot" aria-hidden="true"></span><span id="omrChipText"></span><a id="omrChipLink" href="https://github.com/luckydodo777/curly-octo-sniffle/actions/workflows/omr.yml" target="_blank" rel="noopener" hidden title="저장소 주인은 GitHub에서 Run workflow 를 눌러 기다리지 않고 바로 시작할 수 있어요">바로 시작</a><button type="button" id="omrChipClose" aria-label="알림 닫기">×</button></div>
+    <div class="omr-chip" id="omrChip" role="status" hidden><span class="omr-dot" aria-hidden="true"></span><span id="omrChipText"></span><a id="omrChipLink" href="https://github.com/luckydodo777/curly-octo-sniffle/actions/workflows/omr.yml" target="_blank" rel="noopener" hidden title="저장소 주인은 GitHub에서 Run workflow 를 눌러 기다리지 않고 바로 시작할 수 있어요">바로 시작</a><button type="button" class="btn small" id="omrChipOpen" hidden>열기</button><button type="button" id="omrChipClose" aria-label="알림 닫기">×</button></div>
     <div class="song">
       <div class="song-title" id="songTitle">악보를 불러오는 중…</div>
       <div class="song-meta" id="songMeta"></div>
@@ -343,6 +345,7 @@ ol.steps b{color:var(--ink)}
     </div>
     <div class="sec">
       <div class="status" id="buildInfo">버전 정보 없음 (내려받은 파일 또는 게시본)</div>
+      <button type="button" class="btn small" id="diagBtn" title="재생 위치가 이상하게 움직일 때 눌러서, 복사된 내용을 개발자에게 보내 주세요. 악보 내용은 들어가지 않아요">문제 진단 기록 복사</button>
     </div>
   </aside>
 </div>
@@ -827,18 +830,21 @@ function buildSong(raw, extra) {
   const secAt = (q) => { let s = segs[0]; for (let i = 1; i < segs.length && segs[i].q <= q; i++) s = segs[i]; return s.sec + (q - s.q) * 60 / s.bpm; };
   const qAt = (sec) => { let s = segs[0]; for (let i = 1; i < segs.length && segs[i].sec <= sec; i++) s = segs[i]; return s.q + (sec - s.sec) * s.bpm / 60; };
   const bpmAt = (sec) => { let s = segs[0]; for (let i = 1; i < segs.length && segs[i].sec <= sec; i++) s = segs[i]; return s.bpm; };
-  const all = raw.notes.filter((n) => n.midi >= 21 && n.midi <= 108).map((n, i) => ({ ...n, id: i, start: secAt(n.startQ), end: secAt(n.startQ + n.durQ) }));
-  all.sort((a, b) => a.start - b.start || a.midi - b.midi || b.end - a.end);
+  // occ: 연주 순서상의 위치(원본 마디 번호 + 몇 번째로 연주되는지). 도돌이표를 펼치면 같은 원본 음이 여러 occ를 가진다.
+  const all = raw.notes.filter((n) => n.midi >= 21 && n.midi <= 108).map((n, i) => ({ ...n, id: i, occ: `${n.src ? n.src.measure : n.measure + 1}#${n.pass || 1}`, start: secAt(n.startQ), end: secAt(n.startQ + n.durQ) }));
+  all.sort((a, b) => a.startQ - b.startQ || a.midi - b.midi || b.durQ - a.durQ);
   // 같은 순간 같은 건반이 두 번(두 성부에 겹쳐) 적혀 있으면 한 번만 친다 — 겹치면 소리가 끊기고 어색해짐
   const notes = [];
-  for (const n of all) { const prev = notes[notes.length - 1]; if (prev && prev.midi === n.midi && Math.abs(prev.start - n.start) < 0.004) { prev.end = Math.max(prev.end, n.end); prev.durQ = Math.max(prev.durQ, n.durQ); if (!prev.finger) prev.finger = n.finger; continue; } notes.push(n); }
+  // 같은 순간인지는 초가 아니라 악보 시간(4분음표 단위)으로 판단한다
+  const sameQ = (a, b) => Math.abs(a - b) < 1e-6;
+  for (const n of all) { const prev = notes[notes.length - 1]; if (prev && prev.midi === n.midi && sameQ(prev.startQ, n.startQ)) { prev.end = Math.max(prev.end, n.end); prev.durQ = Math.max(prev.durQ, n.durQ); if (!prev.finger) prev.finger = n.finger; continue; } notes.push(n); }
   const measures = raw.measures.map((m, i) => ({ ...m, idx: i, start: secAt(m.startQ), end: secAt(m.startQ + m.lenQ) }));
   const lastNoteEnd = notes.reduce((m, n) => Math.max(m, n.end), 0);
   const duration = Math.max(measures.length ? measures[measures.length - 1].end : 0, lastNoteEnd);
   const beats = [];
   measures.forEach((m) => { const bq = 4 / m.beatType; const cnt = Math.max(1, Math.round(m.lenQ / bq)); for (let k = 0; k < cnt; k++) beats.push({ sec: secAt(m.startQ + k * bq), down: k === 0 && m.lenQ >= m.beats * bq - 1e-6 }); });
   const steps = [];
-  notes.forEach((n) => { const last = steps[steps.length - 1]; if (last && Math.abs(last.start - n.start) < 0.004) last.notes.push(n); else steps.push({ start: n.start, notes: [n], measure: n.measure }); });
+  notes.forEach((n) => { const last = steps[steps.length - 1]; if (last && sameQ(last.startQ, n.startQ)) last.notes.push(n); else steps.push({ start: n.start, startQ: n.startQ, notes: [n], measure: n.measure, occ: n.occ }); });
   // 실제 연주처럼 음량 균형: 오른손 맨 윗음(멜로디)은 또렷하게, 화음 안쪽 음과 왼손은 부드럽게, 왼손 맨 아랫음(베이스)은 조금 받쳐 준다
   steps.forEach((st) => {
     const R = st.notes.filter((n) => n.hand === "R").sort((a, b) => b.midi - a.midi), L = st.notes.filter((n) => n.hand === "L").sort((a, b) => a.midi - b.midi);
@@ -1013,15 +1019,33 @@ function measureAt(sec) {
 function lowerBound(arr, sec, key = "start") { let lo = 0, hi = arr.length; while (lo < hi) { const m = (lo + hi) >> 1; if (arr[m][key] < sec - 1e-6) lo = m + 1; else hi = m; } return lo; }
 function requiredOf(step) { return step.notes.filter((n) => practiceHas(n.hand)); }
 
-function seek(sec, keepPlaying) {
+// 재생 위치가 바뀐 이유를 남긴다 (역행 원인 추적, 이슈 #14). 사용자 데이터는 담지 않고 시간·마디·이유만.
+//   허용된 되돌아감: user(사용자가 옮김), loop(구간 반복), restart(처음부터), song(곡 바꿈), mode(모드 변경 등)
+const PosLog = {
+  list: [], seq: 0, inSeek: false,
+  add(reason, from, to) {
+    const mi = (t) => (song ? measureAt(t) + 1 : 0);
+    this.list.push({ seq: ++this.seq, t: Math.round(performance.now()), reason, from: +from.toFixed(3), to: +to.toFixed(3), mFrom: mi(from), mTo: mi(to) });
+    if (this.list.length > 300) this.list.shift();
+  },
+  // 악보 커서가 뒤로 갔는데 그 직전에 위치를 옮긴 기록(seek)이 없으면 "이유 없는 역행"으로 남긴다
+  cursorBack(fromStep, toStep) {
+    if (this.inSeek) return;
+    this.add("unexpected-cursor-back", song ? song.secAt(fromStep.q) : 0, song ? song.secAt(toStep.q) : 0);
+  },
+  unexpected() { return this.list.filter((e) => e.reason.startsWith("unexpected")); },
+};
+function seek(sec, keepPlaying, reason = "user") {
   if (!song) return;
+  const from = E.pos;
   E.pos = clamp(sec, 0, song.duration);
+  PosLog.add(reason, from, E.pos);
   E.noteCur = lowerBound(song.notes, E.pos);
   E.beatCur = lowerBound(song.beats, E.pos, "sec");
   E.waitIdx = lowerBound(song.steps, E.pos);
   E.hits.clear(); E.waiting = false; E.finished = false; E.prevStep = null;
   sounding.clear();
-  Score.sync(true);
+  PosLog.inSeek = true; try { Score.sync(true); } finally { PosLog.inSeek = false; }
   updateReadouts();
 }
 function nextWaitStep() {
@@ -1038,9 +1062,9 @@ function play() {
   if (!song) return;
   Sound.ensure();
   const lr = loopRange();
-  if (E.finished || E.pos >= song.duration - 0.01) seek(lr ? lr.start : 0);
-  if (lr && (E.pos < lr.start - 0.01 || E.pos >= lr.end - 0.01)) seek(lr.start);
-  E.playing = true; Practice.start();
+  if (E.finished || E.pos >= song.duration - 0.01) seek(lr ? lr.start : 0, false, "restart");
+  if (lr && (E.pos < lr.start - 0.01 || E.pos >= lr.end - 0.01)) seek(lr.start, false, "loop");
+  E.playing = true; E.loopTold = false; Practice.start();
   if (settings.countIn) startCountIn();
   setPlayIcon();
 }
@@ -1086,9 +1110,14 @@ function advance(d) {
   }
   fireNotes(E.pos, target + (E.waiting ? 0 : 0));
   fireBeats(E.pos, target);
-  E.pos = target;
+  if (target < E.pos - 1e-9) PosLog.add("unexpected-advance-back", E.pos, target); // 재생 중에는 앞으로만 간다
+  E.pos = Math.max(E.pos, target);
   if (!E.waiting && E.pos >= end - 1e-6) {
-    if (lr) { onLoopDone(); seek(lr.start, true); if (settings.countIn) startCountIn(); }
+    if (lr) {
+      onLoopDone(); seek(lr.start, true, "loop"); if (settings.countIn) startCountIn();
+      // 구간 반복으로 되돌아간다는 걸 알려 준다 (켜 둔 걸 잊으면 "뒤로 가서 다시 친다"로 보일 수 있음)
+      if (!E.loopTold) { E.loopTold = true; toast(`구간 반복 중: ${lr.a + 1}~${lr.b + 1}마디를 다시 쳐요 (반복 버튼으로 끌 수 있어요)`); }
+    }
     else { E.playing = false; E.finished = true; Practice.flush(); setPlayIcon(); toast(settings.mode === "wait" ? `끝까지 쳤어요! 정확도 ${accText()}` : "곡이 끝났어요. ▶를 누르면 처음부터 다시 들어요."); }
   }
 }
@@ -1269,7 +1298,9 @@ const Score = {
     this.note("이 악보는 그림으로 그리지 못했어요. 떨어지는 음표와 건반으로 연습할 수 있어요.");
   },
   buildSteps() {
-    const c = this.osmd.cursor; c.reset(); const it = c.Iterator || c.iterator; const steps = []; let guard = 0;
+    // 악보 커서가 갈 수 있는 위치 목록. k = 처음부터 moveToNext()를 몇 번 해야 그 위치인지.
+    // (예전에는 목록 순번을 k로 썼는데, 건너뛴 위치가 있으면 커서가 엉뚱한 곳에 섰다. 시간이 거꾸로 가는 위치(도돌이표 두 번째 바퀴 등)를 만나면 목록을 끝내 버려 뒤쪽 커서가 멈췄다.)
+    const c = this.osmd.cursor; c.reset(); const it = c.Iterator || c.iterator; const steps = []; let guard = 0, k = 0;
     while (it && !it.EndReached && guard++ < 20000) {
       const mi = it.CurrentMeasureIndex;
       const meas = it.CurrentMeasure;
@@ -1277,12 +1308,11 @@ const Score = {
       const ms = meas && meas.AbsoluteTimestamp ? meas.AbsoluteTimestamp.RealValue : ts;
       if (song && song.measures[mi]) {
         const qq = song.measures[mi].startQ + (ts - ms) * 4;
-        if (steps.length && qq < steps[steps.length - 1].q - 1e-6) break;
-        steps.push({ q: qq, mi });
+        if (!steps.length || qq > steps[steps.length - 1].q + 1e-6) steps.push({ q: qq, mi, k });
       }
-      it.moveToNext();
+      it.moveToNext(); k++;
     }
-    this.steps = steps; c.reset();
+    this.steps = steps; c.reset(); this.k = 0;
   },
   sync(force) {
     if (!this.ready || !song || !this.steps.length) return;
@@ -1294,9 +1324,12 @@ const Score = {
     if (target === this.idx && !force) return;
     try {
       const c = this.osmd.cursor;
-      if (target < this.idx || this.idx < 0) { c.reset(); this.idx = 0; }
+      if (target < this.idx && this.idx >= 0) PosLog.cursorBack(this.steps[this.idx], this.steps[target]);
+      const goal = this.steps[target].k;
+      if (goal < this.k || this.idx < 0) { c.reset(); this.k = 0; }
       const it = c.Iterator || c.iterator; // reset()은 iterator를 새로 만들므로 reset 뒤에 가져온다
-      while (this.idx < target && !it.EndReached) { it.moveToNext(); this.idx++; }
+      while (this.k < goal && !it.EndReached) { it.moveToNext(); this.k++; }
+      this.idx = target;
       c.update();
       this.scrollToCursor(force);
     } catch (e) { console.warn(e); }
@@ -1550,11 +1583,11 @@ function setLoop(on) {
   settings.loopOn = on; $("#loopOn").checked = on; $("#loopBtn").setAttribute("aria-pressed", String(on));
   if (song) { const n = song.measures.length; settings.loopA = clamp(parseInt($("#loopA").value) || 1, 1, n); settings.loopB = clamp(Math.max(parseInt($("#loopB").value) || 1, settings.loopA), 1, n); $("#loopA").value = settings.loopA; $("#loopB").value = settings.loopB; }
   saveSettings(); Score.drawShades();
-  const lr = loopRange(); if (lr && (E.pos < lr.start || E.pos >= lr.end)) seek(lr.start);
+  const lr = loopRange(); if (lr && (E.pos < lr.start || E.pos >= lr.end)) seek(lr.start, false, "loop");
 }
 function setLoopRange(a, b) { $("#loopA").value = a; $("#loopB").value = b; setLoop(true); toast(a === b ? `${a}마디를 반복해요` : `${a}~${b}마디를 반복해요`); }
 function stepMeasure(d) { if (!song) return; const mi = clamp(measureAt(E.pos) + d, 0, song.measures.length - 1); seek(song.measures[mi].start); }
-function restart() { if (!song) return; const lr = loopRange(); seek(lr ? lr.start : 0); E.mistakes = 0; E.correct = 0; E.loops = 0; E.passMistakes = 0; updateStats(); }
+function restart() { if (!song) return; const lr = loopRange(); seek(lr ? lr.start : 0, false, "restart"); E.mistakes = 0; E.correct = 0; E.loops = 0; E.passMistakes = 0; updateStats(); }
 function applyView() { const app = $("#app"); app.classList.toggle("view-keys", settings.view === "keys"); app.classList.toggle("view-score", settings.view === "score"); setTimeout(() => { if (Score.ready) { Score.idx = -1; Score.sync(true); } }, 50); }
 
 $("#playBtn").onclick = togglePlay;
@@ -1652,7 +1685,7 @@ function setSong(raw, meta) {
   $("#loopA").value = settings.loopA; $("#loopB").value = settings.loopB;
   E.mistakes = 0; E.correct = 0; E.loops = 0; E.passMistakes = 0; updateStats();
   computeRange(); setRate(settings.rate);
-  seek(loopRange() ? loopRange().start : 0);
+  seek(loopRange() ? loopRange().start : 0, false, "song");
   Score.show(current.xml);
   try { if (meta.persist !== false) localStorage.setItem(STORE_KEY + ":last", JSON.stringify({ kind: meta.kind, name: meta.name || "", xml: current.xml, midiB64: meta.midiB64 || null, flags: current.flags, omrNotes: meta.omrNotes || null, report: current.report, fixed: current.fixed, ai: current.ai ? { json: current.ai.json, ranges: current.ai.ranges } : null, cloudId: current.cloudId })); } catch (e) {}
   if (meta.persist !== false && meta.kind !== "demo" && !meta.fromLibrary) Library.autoSave(meta.file || null, !!meta.sameSong);
@@ -1676,7 +1709,7 @@ function rebuildTiming() {
   if (!song || !current.raw) return;
   const mi = measureAt(E.pos); const flagged = song.flagged; const wasPlaying = E.playing; pause();
   song = buildSong(current.raw, {}); song.flagged = flagged;
-  setRate(settings.rate); seek(song.measures[mi] ? song.measures[mi].start : 0);
+  setRate(settings.rate); seek(song.measures[mi] ? song.measures[mi].start : 0, false, "song");
   try { const last = JSON.parse(localStorage.getItem(STORE_KEY + ":last") || "null"); if (last) { last.tempos = current.raw.tempos; localStorage.setItem(STORE_KEY + ":last", JSON.stringify(last)); } } catch (e) {}
   Library.autoSave(null, true);
   if (wasPlaying) play();
@@ -1824,6 +1857,8 @@ const Library = {
   },
   async list() { return this.be.list(`${this.root()}/songs`, { orderBy: "updatedAt", dir: "desc", limit: 200 }); },
   async open(id) {
+    // 늦게 끝난 이전 요청이 더 나중에 연 곡을 덮어쓰지 않게 한다
+    const seq = this.openSeq = (this.openSeq || 0) + 1;
     const sp = this.songPath(id); const d = await this.be.get(sp); if (!d) throw new Error("악보를 찾지 못했어요");
     const big = d.big || {};
     const [xml, midi, ai] = await Promise.all([this.getBig(sp, "xml", big.xml), this.getBig(sp, "midi", big.midi), this.getBig(sp, "ai", big.ai)]);
@@ -1832,6 +1867,7 @@ const Library = {
     if (d.title && (!raw.title || raw.title === "제목 없는 악보")) raw.title = d.title; // 자동 변환 악보는 제목이 없을 때가 많다
     if (Array.isArray(d.tempos) && d.tempos.length) raw.tempos = d.tempos.map((t) => ({ ...t }));
     const aiObj = ai ? JSON.parse(ai) : null;
+    if (seq !== this.openSeq) return false;
     setSong(raw, { kind: d.kind, xml: xml || null, name: d.name, midiB64: midi || null, flags: d.kind === "omr" ? omrFlags(raw, d.omrNotes) : d.flags || [], omrNotes: d.omrNotes || null, report: d.report || null, fixed: d.fixed || [], ai: aiObj, cloudId: id, fromLibrary: true });
     current.hasCloudOriginal = !!(d.original && big.orig);
     toast(d.kind === "omr" && !(d.tempos && d.tempos.length) && !(raw.tempos && raw.tempos.length) ? `'${d.title}'을(를) 열었어요. 자동 변환은 빠르기표를 읽지 못하니, 설정 → 빠르기에서 악보의 ♩= 숫자로 고쳐 주세요.` : `'${d.title}'을(를) 열었어요`);
@@ -1967,6 +2003,15 @@ async function renderLibrary() {
   });
 }
 $("#omrChipClose").onclick = () => { $("#omrChip").hidden = true; };
+$("#diagBtn").onclick = async () => {
+  // 악보 내용(음표)은 넣지 않는다: 위치 기록, 설정, 곡 크기만
+  const info = { build: (document.querySelector('meta[name="gunban-build"]') || {}).content || "local", kind: current && current.kind, measures: song ? song.measures.length : 0,
+    steps: song ? song.steps.length : 0, cursorSteps: Score.steps.length, settings: { mode: settings.mode, hands: settings.hands, loopOn: settings.loopOn, loopA: settings.loopA, loopB: settings.loopB, rate: settings.rate },
+    unexpected: PosLog.unexpected().length, log: PosLog.list.slice(-80) };
+  const txt = JSON.stringify(info);
+  try { await navigator.clipboard.writeText(txt); toast(`진단 기록을 복사했어요 (이유 없는 역행 ${info.unexpected}번)`); }
+  catch (e) { console.log(txt); toast("복사하지 못했어요. 개발자 도구 콘솔에 출력했어요."); }
+};
 // Firebase 로그인 오류를 초보자도 알 수 있는 말로
 function authErrorText(e) {
   const c = (e && e.code) || "";
@@ -2359,6 +2404,7 @@ const Convert = {
     const c = $("#omrChip"); c.hidden = !text; c.className = "omr-chip " + (cls || "");
     $("#omrChipText").textContent = text || "";
     $("#omrChipLink").hidden = !withLink;
+    $("#omrChipOpen").hidden = true;
   },
   remember() { try { localStorage.setItem(STORE_KEY + ":omrJob", JSON.stringify(this.jobId ? { id: this.jobId, name: this.name, started: this.started } : null)); } catch (e) {} },
   elapsed() { const s = Math.round((Date.now() - this.started) / 1000); return s < 60 ? `${s}초` : `${Math.floor(s / 60)}분 ${s % 60}초`; },
@@ -2367,9 +2413,11 @@ const Convert = {
     let j = null; try { j = await Library.be.get(`${Library.root()}/omrJobs/${this.jobId}`); } catch (e) {}
     if (!j) { this.chip(""); this.jobId = null; this.remember(); return; }
     if (j.status === "done" && j.songId) {
-      this.chip(`'${this.name}' 변환 완료! 여는 중…`, "ok"); const id = j.songId; this.jobId = null; this.remember();
-      try { await Library.open(id); } catch (e) { toast("변환은 끝났지만 열지 못했어요. 내 악보함에서 열어 주세요."); }
-      setTimeout(() => this.chip(""), 4000); return;
+      const id = j.songId, name = this.name; this.jobId = null; this.remember();
+      const openIt = async () => { this.chip(`'${name}' 변환 완료! 여는 중…`, "ok"); try { await Library.open(id); } catch (e) { toast("변환은 끝났지만 열지 못했어요. 내 악보함에서 열어 주세요."); } setTimeout(() => this.chip(""), 4000); };
+      // 연습(재생) 중이면 곡을 갑자기 바꾸지 않고 "열기" 버튼을 보여 준다
+      if (E.playing) { this.chip(`'${name}' 변환 완료!`, "ok"); const b = $("#omrChipOpen"); b.hidden = false; b.onclick = openIt; return; }
+      await openIt(); return;
     }
     if (j.status === "failed") { this.chip(`'${this.name}' 변환 실패: ${j.error || "알 수 없는 오류"} (더 선명한 PDF로 다시 올려 보세요)`, "bad"); this.jobId = null; this.remember(); return; }
     const msg = j.status === "running" ? `악보를 인식하는 중… (${this.elapsed()})` : (this.kicked ? `변환 준비 중… (${this.elapsed()}, 보통 1~2분이면 열려요)` : `변환 순서를 기다리는 중… (${this.elapsed()}, 보통 5~10분 안에 시작돼요)`);
@@ -2469,7 +2517,7 @@ async function recheckMeasure(mi, filePromise) {
     const keepPos = mi; const xml = jsonToMusicXML(ai.json);
     const rep = current.report ? { ...current.report } : null;
     setSong(parseMusicXML(xml), { ...current.meta, file: null, sameSong: true, fromLibrary: false, persist: true, xml, flags: flags.concat(repairScore(JSON.parse(JSON.stringify(ai.json))).filter((f) => !flags.some((x) => x.m === f.m))), fixed, report: rep, ai, keepLoop: true });
-    if (song.measures[keepPos]) seek(song.measures[keepPos].start);
+    if (song.measures[keepPos]) seek(song.measures[keepPos].start, false, "song");
     toast(changed ? `고쳤어요 — ${notes.slice(0, 2).join(" / ")}` : res.verdicts[mi - rg.start] === "match" ? `${mi + 1}마디는 원본과 같아요. 그래도 이상하면 그 부분의 빠르기·손가락을 확인해 보세요.` : `${mi + 1}마디: 다를 수 있지만 확실히 고치지 못했어요`);
   } catch (e) {
     toast(e && e.code === "not_granted" ? "AI 사용을 허용해야 다시 확인할 수 있어요." : e && e.code === "rate_limited" ? "요청이 많아요. 잠시 뒤 다시 눌러 주세요." : "다시 확인하지 못했어요. 잠시 뒤 다시 시도해 주세요.");
@@ -2500,13 +2548,15 @@ function boot() {
     }
   } catch (e) {}
   if (!restored) loadDemo();
+  // 지난번에 켜 둔 구간 반복이 그대로 살아 있으면 알려 준다 (모르면 "자꾸 뒤로 돌아간다"로 느껴짐)
+  if (restored && settings.loopOn && song) { const lr = loopRange(); if (lr) setTimeout(() => toast(`지난번 구간 반복이 켜져 있어요: ${lr.a + 1}~${lr.b + 1}마디 (반복 버튼으로 끌 수 있어요)`), 600); }
   try { const last = JSON.parse(localStorage.getItem(STORE_KEY + ":last") || "null"); if (restored && last && last.cloudId && current) current.cloudId = last.cloudId; } catch (e) {}
   Library.init();
   wakeOmrServer(); // 잠든 변환 서버를 미리 깨워 둔다
   if (matchMedia("(pointer: coarse)").matches) $("#hintKeys").hidden = true;
   requestAnimationFrame(frame);
 }
-window.GunbanNavi = { parseMusicXML, parseMIDI, jsonToMusicXML, buildSong, mxlToXml, get song() { return song; }, E, settings, ODE, seek, play, pause, userNoteOn, setMode, setHands, setLoopRange, setRate, Score };
+window.GunbanNavi = { parseMusicXML, parseMIDI, jsonToMusicXML, buildSong, mxlToXml, get song() { return song; }, E, settings, ODE, seek, play, pause, userNoteOn, setMode, setHands, setLoopRange, setRate, Score, PosLog };
 boot();
 </script>
 </body></html>

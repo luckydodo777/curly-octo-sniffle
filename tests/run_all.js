@@ -1,18 +1,24 @@
 // 건반 내비 자동 테스트 — 사용법: (한 번만) npm i playwright && npx playwright install chromium
 //                                  python build.py && node tests/run_all.js
-// 외부 네트워크(CDN·폰트)는 막고 테스트한다. 악보 그림(OSMD)과 PDF(pdf.js)는 CDN이 필요해서 여기서는 빠진다.
+// 외부 네트워크(CDN·폰트)는 막고 테스트한다. PDF(pdf.js)는 빠진다.
+// 악보 그림(OSMD 1.8.9)은 tests/.cache/osmd-1.8.9.min.js 가 있을 때만 시험한다 (CI는 GitHub 릴리스에서 받아 둠, 저장소에는 넣지 않음).
 const { chromium } = require('playwright');
 const path = require('path'); const fs = require('fs');
 const PAGE = 'file://' + path.resolve(__dirname, '../dist/건반내비.html');
 const FIX = (f) => path.resolve(__dirname, 'fixtures', f);
+const OSMD_LOCAL = process.env.OSMD_JS || path.resolve(__dirname, '.cache', 'osmd-1.8.9.min.js');
 let failed = 0; const ok = (name, cond, info) => { console.log(`${cond ? 'PASS' : 'FAIL'}  ${name}${info ? '  ' + info : ''}`); if (!cond) failed++; };
 
 async function openPage(browser, opts = {}) {
   const p = await browser.newPage({ viewport: opts.viewport || { width: 1300, height: 850 } });
   const errs = []; p.on('pageerror', (e) => errs.push(e.message));
   if (opts.mockAI) await p.addInitScript(opts.mockAI);
-  await p.route('**/*', (r) => (r.request().url().startsWith('file:') ? r.continue() : r.abort()));
-  await p.goto(PAGE); await p.waitForTimeout(1200);
+  await p.route('**/*', (r) => {
+    const u = r.request().url();
+    if (opts.osmd && u.includes('opensheetmusicdisplay')) return r.fulfill({ body: fs.readFileSync(OSMD_LOCAL), contentType: 'application/javascript' });
+    return u.startsWith('file:') ? r.continue() : r.abort();
+  });
+  await p.goto(PAGE); await p.waitForTimeout(opts.osmd ? 2500 : 1200);
   return { p, errs };
 }
 
@@ -278,6 +284,89 @@ async function openPage(browser, opts = {}) {
     ok('못갖춘마디는 짧은 그대로·표시 안 함·원본 위치 보존', r.f.len0 === 1 && r.f.m1 === 1 && r.f.flags === 0 && r.f.src && r.f.src.measure === '1' && r.f.src.offsetQ === 0, JSON.stringify(r.f));
     ok('변환 서버 안내를 확인 필요 목록에 합침', JSON.stringify(r.g) === '[{"m":0,"issues":["박자표 추정"]},{"m":2,"issues":["박자표 확인","길이"]}]', JSON.stringify(r.g));
     ok('페이지 오류 없음', errs.length === 0, errs.join(' | ')); await p.close(); }
+
+  // 11) 재생 위치 동기화·역행 추적 (이슈 #14 PR 2)
+  { const { p, errs } = await openPage(browser);
+    // (a) 같은 순간 판단은 악보 시간으로: 아주 빠른 곡에서 3ms 차이 나는 두 음은 다른 차례
+    const a = await p.evaluate(() => {
+      const raw = { title: 't', tempos: [{ q: 0, bpm: 600 }], measures: [{ num: 1, startQ: 0, lenQ: 4, beats: 4, beatType: 4 }],
+        notes: [{ midi: 60, startQ: 0, durQ: 1 / 32, staff: 1, hand: 'R', measure: 0 }, { midi: 62, startQ: 1 / 32, durQ: 1, staff: 1, hand: 'R', measure: 0 }, { midi: 48, startQ: 0, durQ: 1, staff: 2, hand: 'L', measure: 0 }] };
+      const s = GunbanNavi.buildSong(raw, {}); return { steps: s.steps.map((x) => x.notes.map((n) => n.midi)), gapMs: Math.round((s.notes[2].start - s.notes[0].start) * 1000), occ: s.notes[0].occ };
+    });
+    ok('같은 순간은 악보 시간으로 묶음 (3ms 차이 두 음은 다른 차례)', JSON.stringify(a.steps) === '[[48,60],[62]]' && a.gapMs < 5 && a.occ === '1#1', JSON.stringify(a));
+    // (b) 따라치기로 끝까지: 위치·차례가 뒤로 가지 않음, 이유 없는 역행 0
+    const b = await p.evaluate(async () => {
+      const G = GunbanNavi; G.settings.countIn = false; G.setMode('wait'); G.setHands('both'); G.setRate(1.5); G.seek(G.song.measures[12].start, false, 'test'); G.play(); // 13~16마디
+      let back = 0, lastPos = -1, lastIdx = -1, guard = 0;
+      while (!G.E.finished && guard++ < 600) {
+        await new Promise((r) => setTimeout(r, 20));
+        if (G.E.pos < lastPos - 1e-9 || G.E.waitIdx < lastIdx) back++; lastPos = G.E.pos; lastIdx = G.E.waitIdx;
+        if (G.E.waiting) { const st = G.song.steps[G.E.waitIdx]; if (st) st.notes.forEach((n) => G.userNoteOn(n.midi)); }
+      }
+      G.pause(); return { finished: G.E.finished, back, unexpected: G.PosLog.unexpected().length, reasons: [...new Set(G.PosLog.list.map((e) => e.reason))] };
+    });
+    ok('따라치기 끝까지: 위치·차례가 뒤로 가지 않음', b.finished && b.back === 0 && b.unexpected === 0, JSON.stringify(b));
+    // (c) 구간 반복으로 돌아갈 때는 이유(loop)가 남고, 한 번 알려 줌
+    const c = await p.evaluate(async () => {
+      const G = GunbanNavi; G.setMode('listen'); G.setLoopRange(2, 2); G.setRate(1.5); G.play();
+      await new Promise((r) => setTimeout(r, 3500)); G.pause(); G.setLoopRange(1, 1); document.querySelector('#loopOn').click();
+      const loops = G.PosLog.list.filter((e) => e.reason === 'loop' && e.to < e.from); return { loops: loops.length, toast: document.querySelector('#toast').textContent, unexpected: G.PosLog.unexpected().length };
+    });
+    ok('구간 반복 되돌아감은 이유가 남고 알려 줌', c.loops >= 1 && c.unexpected === 0, JSON.stringify(c));
+    ok('페이지 오류 없음', errs.length === 0, errs.join(' | ')); await p.close(); }
+
+  // 12) 변환이 끝나도 연습 중이면 곡을 바꾸지 않음 + 늦게 끝난 열기는 무시
+  { const mock = () => {
+      const store = new Map(); window.__store = store; let cb = null;
+      window.GUNBAN_CLOUD_BACKEND = { onAuth: (f) => { cb = f; setTimeout(() => f({ uid: 'u1', anon: true }), 0); }, signIn: async () => {}, signOut: async () => {}, signInAnon: async () => {},
+        set: async (k, o) => { store.set(k, o); }, list: async () => [], del: async () => {}, newId: () => 'x',
+        get: async (k) => { if (k.endsWith('/slow')) await new Promise((r) => setTimeout(r, 400)); return store.has(k) ? JSON.parse(JSON.stringify(store.get(k))) : null; } };
+    };
+    const { p, errs } = await openPage(browser, { mockAI: mock });
+    const r = await p.evaluate(async () => {
+      const xml = (t, step) => jsonToMusicXML({ title: t, time: [4, 4], measures: [{ rh: [{ p: step + '5', d: 'w' }], lh: [{ p: 'C3', d: 'w' }] }] });
+      const S = window.__store; const put = (id, t, step) => { S.set(`users/u1/songs/${id}`, { title: t, kind: 'musicxml', name: t, big: { xml: 1 }, flags: [] }); S.set(`users/u1/songs/${id}/chunks/xml_0`, { data: xml(t, step) }); };
+      put('slow', '느린곡', 'D'); put('fast', '빠른곡', 'E'); put('done', '변환곡', 'F');
+      // 늦게 끝난 열기 무시
+      const p1 = Library.open('slow'); await Library.open('fast'); await p1; const afterOpen = GunbanNavi.song.title;
+      // 재생 중 변환 완료 → 곡 그대로, 열기 버튼
+      S.set('users/u1/omrJobs/j1', { status: 'done', songId: 'done' }); Convert.jobId = 'j1'; Convert.name = 'a.pdf';
+      GunbanNavi.setMode('listen'); GunbanNavi.play(); await Convert.poll();
+      const during = { title: GunbanNavi.song.title, openBtn: !document.querySelector('#omrChipOpen').hidden };
+      GunbanNavi.pause(); document.querySelector('#omrChipOpen').click(); await new Promise((r) => setTimeout(r, 600));
+      return { afterOpen, during, after: GunbanNavi.song.title };
+    });
+    ok('늦게 끝난 곡 열기가 나중 곡을 덮어쓰지 않음', r.afterOpen === '빠른곡', r.afterOpen);
+    ok('연습 중 변환 완료: 곡을 바꾸지 않고 열기 버튼', r.during.title === '빠른곡' && r.during.openBtn && r.after === '변환곡', JSON.stringify(r));
+    ok('페이지 오류 없음', errs.length === 0, errs.join(' | ')); await p.close(); }
+
+  // 13) 악보 커서 ↔ 연주 위치 (OSMD 1.8.9 필요): 못갖춘마디·박자 넘침 마디·도돌이표가 있어도 커서가 연주 위치 마디에 있고 뒤로 가지 않음
+  if (fs.existsSync(OSMD_LOCAL)) {
+    const { p, errs } = await openPage(browser, { osmd: true });
+    const r = await p.evaluate(async () => {
+      const N = (st, dur, voice, staff, oct = 4) => `<note><pitch><step>${st}</step><octave>${oct}</octave></pitch><duration>${dur}</duration><voice>${voice}</voice><type>quarter</type><staff>${staff}</staff></note>`;
+      const lh = (d) => `<backup><duration>${d}</duration></backup>${N('C', d, 5, 2, 3)}`;
+      const xml = `<?xml version="1.0"?><score-partwise><part-list><score-part id="P1"><part-name>P</part-name></score-part></part-list><part id="P1">
+        <measure number="0" implicit="yes"><attributes><divisions>1</divisions><key><fifths>0</fifths></key><time><beats>3</beats><beat-type>4</beat-type></time><staves>2</staves><clef number="1"><sign>G</sign><line>2</line></clef><clef number="2"><sign>F</sign><line>4</line></clef></attributes>${N('G', 1, 1, 1)}${lh(1)}</measure>
+        <measure number="1">${N('C', 1, 1, 1)}${N('D', 1, 1, 1)}${N('E', 1, 1, 1)}${lh(3)}</measure>
+        <measure number="2"><barline location="left"><bar-style>heavy-light</bar-style><repeat direction="forward"/></barline>${N('F', 1, 1, 1)}${N('G', 1, 1, 1)}${N('A', 1, 1, 1)}${N('B', 1, 1, 1)}${lh(3)}</measure>
+        <measure number="3">${N('C', 1, 1, 1, 5)}${N('B', 1, 1, 1)}${N('A', 1, 1, 1)}${lh(3)}<barline location="right"><bar-style>light-heavy</bar-style><repeat direction="backward"/></barline></measure>
+        <measure number="4"><note><grace/><pitch><step>A</step><octave>4</octave></pitch><voice>1</voice><type>eighth</type><staff>1</staff></note>${N('G', 1, 1, 1)}${N('E', 1, 1, 1)}${N('C', 1, 1, 1)}${lh(3)}</measure>
+      </part></score-partwise>`;
+      const raw = parseMusicXML(xml, { fit: true }); setSong(raw, { kind: 'omr', xml, name: 't', flags: omrFlags(raw), persist: false });
+      for (let i = 0; i < 60 && !Score.ready; i++) await new Promise((r) => setTimeout(r, 100));
+      if (!Score.ready) return { ready: false };
+      const G = GunbanNavi; G.PosLog.list.length = 0; let bad = [];
+      for (const st of G.song.steps) {
+        G.E.pos = st.start + 1e-4; Score.sync(false);
+        const it = Score.osmd.cursor.Iterator || Score.osmd.cursor.iterator;
+        if (it.CurrentMeasureIndex !== st.measure) bad.push([st.measure, it.CurrentMeasureIndex]);
+      }
+      return { ready: true, steps: G.song.steps.length, cursorSteps: Score.steps.length, lastK: Score.steps[Score.steps.length - 1].k, bad, unexpected: G.PosLog.unexpected().length, flags: raw.fitFlags.map((f) => f.m) };
+    });
+    ok('악보 커서가 연주 위치 마디와 일치 (못갖춘마디·박자 넘침·도돌이표·꾸밈음)', r.ready && r.bad.length === 0 && r.unexpected === 0 && r.steps > 10, JSON.stringify(r));
+    ok('페이지 오류 없음 (악보 그림)', errs.length === 0, errs.join(' | ')); await p.close();
+  } else console.log('SKIP  악보 커서 시험 (tests/.cache/osmd-1.8.9.min.js 없음)');
 
   await browser.close();
   console.log(failed ? `\n${failed}개 실패` : '\n모두 통과'); process.exit(failed ? 1 : 0);

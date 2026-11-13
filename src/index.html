@@ -13,7 +13,7 @@
       <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><b style="left:4px"></b><b style="left:10px"></b><b style="left:22px"></b></span>
       건반 내비
     </div>
-    <div class="omr-chip" id="omrChip" role="status" hidden><span class="omr-dot" aria-hidden="true"></span><span id="omrChipText"></span><a id="omrChipLink" href="https://github.com/luckydodo777/curly-octo-sniffle/actions/workflows/omr.yml" target="_blank" rel="noopener" hidden title="저장소 주인은 GitHub에서 Run workflow 를 눌러 기다리지 않고 바로 시작할 수 있어요">바로 시작</a><button type="button" id="omrChipClose" aria-label="알림 닫기">×</button></div>
+    <div class="omr-chip" id="omrChip" role="status" hidden><span class="omr-dot" aria-hidden="true"></span><span id="omrChipText"></span><a id="omrChipLink" href="https://github.com/luckydodo777/curly-octo-sniffle/actions/workflows/omr.yml" target="_blank" rel="noopener" hidden title="저장소 주인은 GitHub에서 Run workflow 를 눌러 기다리지 않고 바로 시작할 수 있어요">바로 시작</a><button type="button" class="btn small" id="omrChipOpen" hidden>열기</button><button type="button" id="omrChipClose" aria-label="알림 닫기">×</button></div>
     <div class="song">
       <div class="song-title" id="songTitle">악보를 불러오는 중…</div>
       <div class="song-meta" id="songMeta"></div>
@@ -166,6 +166,7 @@
     </div>
     <div class="sec">
       <div class="status" id="buildInfo">버전 정보 없음 (내려받은 파일 또는 게시본)</div>
+      <button type="button" class="btn small" id="diagBtn" title="재생 위치가 이상하게 움직일 때 눌러서, 복사된 내용을 개발자에게 보내 주세요. 악보 내용은 들어가지 않아요">문제 진단 기록 복사</button>
     </div>
   </aside>
 </div>
