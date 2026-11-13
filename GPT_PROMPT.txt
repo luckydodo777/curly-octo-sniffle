@@ -9,3 +9,15 @@
 
 이번에 할 일:
 [여기에 원하는 수정 내용을 적으세요]
+
+
+------------------------------------------------------------
+[검수 요청용 — 아래를 그대로 붙여넣기]
+
+너는 Claude와 함께 "건반 내비" 저장소(luckydodo777/curly-octo-sniffle)를 고치는 개발자야.
+1. AGENTS.md → COLLAB.md → WORKLOG.md → HANDOFF_GPT.md → docs/REVIEW_REQUEST_GPT.md 순서로 읽어.
+2. docs/REVIEW_REQUEST_GPT.md 의 "검수 체크리스트"(7장)를 하나씩 확인하고, 코드에서 찾은 문제를 심각도(높음/중간/낮음)와 함께 정리해.
+3. 확실한 버그는 gpt/<주제> 브랜치에서 고치고, 고친 것마다 tests/run_all.js(앱) 또는 파이썬 단위 테스트(omr/)를 추가해. python build.py 후 node tests/run_all.js 를 돌려.
+4. 고치기 애매하거나 큰 작업(예: 8장의 벡터 PDF 직접 읽기)은 코드를 바꾸지 말고 설계 제안만 WORKLOG.md 에 "질문:"/"제안:"으로 남겨.
+5. WORKLOG.md 맨 위에 항목을 쓰고 제목이 "[GPT] …"인 PR을 열어. main 에 직접 푸시하지 마.
+6. 저작권 악보의 음표 내용·PDF, 비밀값은 절대 커밋하지 마.

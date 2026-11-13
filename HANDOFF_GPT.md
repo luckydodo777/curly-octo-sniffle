@@ -1,33 +1,47 @@
 # 건반 내비 — GPT 인수인계 문서
 
 > 이 문서는 ChatGPT(또는 다른 AI/개발자)가 이 프로젝트를 이어서 고칠 수 있도록 Claude가 작성했다.
-> 작성 시점: 2026-10-29 · 기준 버전: 게시본 v6과 같은 코드 (빌드 결과가 게시본과 바이트 단위로 동일함을 확인)
+> 처음 작성: 2026-10-29 · 마지막 갱신: 2026-11-13 (자동 변환 기능 PR #7~#12 반영)
+> **최근 작업의 검수 요청은 [`docs/REVIEW_REQUEST_GPT.md`](docs/REVIEW_REQUEST_GPT.md)를 보세요.**
 
 ## 1. 무엇을 만드는 앱인가
 - 목표: 피아노 악보를 올리면 **어느 건반을 칠지** 낙하 노트와 건반 하이라이트로 보여 주고, 반복 연습·템포 조절로 **초보자도 따라 칠 수 있게** 하는 앱.
 - 사용자가 실제로 익히려는 곡: Theishter 편곡 「Stay Alive」(Re:Zero ED2), 46마디, 4플랫, 템포 변화가 많음. **이 PDF는 저작권 때문에 패키지에 넣지 않았다.** 사용자가 직접 갖고 있다.
-- 형태: **설치 없이 브라우저에서 열리는 HTML 한 파일** (`dist/건반내비.html`). 서버·빌드 도구 없이 동작한다.
+- 형태: **설치 없이 브라우저에서 열리는 HTML 한 파일** (`dist/건반내비.html`). 사용자가 쓰는 곳은 GitHub Pages(https://luckydodo777.github.io/curly-octo-sniffle/).
+- 부가 기능: 구글/익명 로그인과 내 악보함(Firebase), PDF·사진 무료 자동 변환(Audiveris + GitHub Actions + Cloudflare 중계기).
 
 ## 2. 폴더 구조
 ```
-gunban-navi/
+curly-octo-sniffle/
+├─ AGENTS.md · CLAUDE.md · COLLAB.md · WORKLOG.md   ← 협업 규칙과 작업 기록
 ├─ HANDOFF_GPT.md          ← 이 문서
-├─ GPT_PROMPT.txt          ← ChatGPT에 처음 붙여넣을 지시문
+├─ GPT_PROMPT.txt          ← ChatGPT에 붙여넣을 지시문 (일반 작업 / 검수)
+├─ firestore.rules         ← Firestore 보안 규칙 (Firebase 콘솔에 게시)
+├─ omr/                    ← 무료 자동 변환(Audiveris) 작업자
+│  ├─ worker.py            ← 대기열 처리·Audiveris 실행·DPI 선택 (--run / --check / --local)
+│  ├─ postprocess.py       ← 빠르기표·박자표 보정, 제목, 오선 간격 측정
+│  ├─ server.py · Dockerfile · deploy_hf.py   ← (유료 선택지) HTTP 변환 서버
+│  └─ test/                ← 회귀 시험 악보 (퍼블릭 도메인·직접 작곡)
+├─ relay/kick-worker.js    ← Cloudflare Worker: 업로드 즉시 omr.yml 실행
+├─ .github/workflows/      ← test(CI) · deploy(Pages) · omr(변환) · omr-test(변환 회귀) · hf-deploy
 ├─ build.py                ← src/ + assets/ → dist/ 로 합치기 (파이썬 표준 라이브러리만 사용)
 ├─ src/
 │  ├─ index.html           ← 화면 구조(마크업). @@STYLE / @@SAMPLES / @@SCRIPT 자리표시자 3개
 │  ├─ styles.css           ← 디자인 (색은 :root 토큰, 다크모드 포함)
-│  └─ app.js               ← 모든 동작 (약 1,700줄, 바닐라 JS, 모듈/번들러 없음)
+│  └─ app.js               ← 모든 동작 (약 2,100줄, 바닐라 JS, 모듈/번들러 없음)
 ├─ assets/
 │  └─ piano_samples.json   ← 피아노 녹음 (base64 MP3, 약 3MB) — 코드 수정 시 열 필요 없음
 ├─ dist/
 │  ├─ 건반내비.html          ← 완성본 (브라우저에서 바로 열기)
 │  └─ artifact_body.html   ← Claude 아티팩트 게시용 본문 (doctype/head 없음)
 ├─ tests/
-│  ├─ run_all.js           ← 자동 테스트 20개 (Playwright)
+│  ├─ run_all.js           ← 자동 테스트 48개 (Playwright)
+│  ├─ omr_compare.js       ← 변환 결과와 원본 MusicXML을 음 단위로 비교
 │  └─ fixtures/            ← test.musicxml, test.mxl, test.mid, synthetic_page.png(합성 악보 이미지)
 └─ docs/
+   ├─ REVIEW_REQUEST_GPT.md ← 최근 작업 검수·개선 요청서
    ├─ REA_분석_및_설계.md    ← 유사 앱 분석(REA), 설계, 사용자 피드백 1~4차와 조치 이력
+   ├─ FIREBASE_SETUP.md · OMR_FAST.md · OMR_SERVER.md   ← 설정 방법
    └─ LICENSES.md          ← 외부 라이브러리·샘플 라이선스
 ```
 
@@ -37,7 +51,7 @@ gunban-navi/
 ```bash
 python build.py                       # dist/건반내비.html 생성
 npm i playwright && npx playwright install chromium   # 처음 한 번
-node tests/run_all.js                 # 39개 테스트, "모두 통과"가 나와야 함
+node tests/run_all.js                 # 48개 테스트, "모두 통과"가 나와야 함
 ```
 - 테스트는 외부 네트워크를 막고 돌린다. 그래서 **악보 그림(OSMD)과 PDF 읽기(pdf.js)는 테스트에서 빠진다** (둘 다 CDN 필요).
 - AI 기능은 `window.GUNBAN_AI_ADAPTER` 가짜 구현으로 시험한다 (아래 6장).
@@ -77,11 +91,12 @@ node tests/run_all.js                 # 39개 테스트, "모두 통과"가 나�
 - 보안 규칙: 저장소 루트 `firestore.rules`.
 
 ## 4-3. 무료 자동 변환 (토큰 없는 OMR)
-- PDF·사진 → MusicXML 을 오픈소스 **Audiveris 5.11.0** 으로 변환한다. AI 토큰을 쓰지 않는다.
-- 흐름: 앱(로그인)에서 요청 → `users/{uid}/omrJobs/{id}`(원본 chunks) + `omrQueue/{id}` → GitHub Actions `omr.yml`(5분마다, 또는 수동 Run) → `omr/worker.py --run` → `users/{uid}/songs/{새 id}`(kind "omr")에 저장 → 작업 상태 done/failed.
-- 필요한 비밀값: `FIREBASE_SERVICE_ACCOUNT` (docs/FIREBASE_SETUP.md 8단계). 없으면 워크플로가 조용히 건너뛴다.
-- 회귀 시험: `omr-test.yml` 이 `omr/test/*.musicxml`(공개 예제·직접 만든 연습곡)을 PDF로 만들어 다시 읽고, 앱 파서로 음 단위 100% 일치를 확인한다(`tests/omr_compare.js`).
-- 알려진 한계: 빠르기표(♩=)를 읽지 못함 → 앱이 열 때 빠르기 수정을 안내. 손가락 번호 "3"을 셋잇단으로 오인할 수 있음. 공개 저장소라 Actions 로그는 공개 → 워커는 파일 이름·내용을 로그에 남기지 않는다.
+- PDF·사진 → MusicXML 을 오픈소스 **Audiveris 5.11.0** 으로 변환한다. AI 토큰을 쓰지 않는다. 자세한 흐름도·근거·한계는 `docs/REVIEW_REQUEST_GPT.md`.
+- 흐름: 업로드(`autoConvert`) → 로그인 안 했으면 Firebase 익명 로그인(`Library.ensureUser`) → `users/{uid}/omrJobs/{id}`(원본 chunks) + `omrQueue/{id}` → 중계기(`OMR_KICK_URL`, `relay/kick-worker.js`)가 `omr.yml`을 바로 실행(없으면 5분 cron) → `omr/worker.py --run --linger 600` → `users/{uid}/songs/{새 id}`(kind "omr") → 앱이 진행 표시(`Convert`)를 보다가 완료되면 자동으로 연다.
+- 정확도 보정: PDF 첫 쪽 오선 간격을 재서 DPI 자동 선택(작은 오선만 400DPI 안팎), PDF 글자층에서 빠르기표 읽기, 박자표 누락·오독 보정(`omr/postprocess.py`). 앱은 kind "omr" 악보를 `parseMusicXML(xml, {fit:true})`로 읽어 박자가 넘치는 성부를 마디 길이에 맞추고 해당 마디를 "확인 필요"로 표시한다. 악보 그림(OSMD)이 실패하면 8va 등 표시를 빼고 다시 그린다.
+- 필요한 설정: Firebase Auth(Google·익명), Firestore + `firestore.rules`, GitHub 비밀값 `FIREBASE_SERVICE_ACCOUNT`, Cloudflare Worker(`GH_TOKEN` 비밀값). 모두 사용자 계정에 설정 완료(2026-10-30).
+- 회귀 시험: `omr-test.yml` 이 `omr/test/*.musicxml`을 PDF로 만들어 다시 읽고(작업자 + Docker 서버 두 경로) 음 단위 100% 일치를 확인한다(`tests/omr_compare.js`).
+- 알려진 한계: Audiveris가 박자표 변화를 놓치면 뒤 마디 음이 빠짐(후처리로 복구 불가). 손가락 번호 "3"을 셋잇단으로 오인할 수 있음. 공개 저장소라 Actions 로그는 공개 → 워커는 파일 이름·내용을 로그에 남기지 않는다.
 
 ## 5. 지켜야 할 제약
 1. **한 파일 HTML 유지.** 외부 스크립트는 CDN에서만: OSMD `opensheetmusicdisplay@1.8.9` (jsDelivr), pdf.js `3.11.174` (cdnjs). 버전은 고정. Claude 아티팩트로 다시 게시할 경우 CSP 때문에 **스크립트 이외의 외부 요청(fetch·이미지·오디오)은 막힌다** → 샘플·데이터는 파일 안에 넣어야 한다.
@@ -105,7 +120,8 @@ window.GUNBAN_AI_ADAPTER = {
 - **API 키를 HTML에 직접 넣지 말 것** (파일을 공유하면 키가 노출됨). 서버 프록시나 사용자 입력 방식을 쓸 것.
 
 ## 7. 현재 상태와 알려진 문제 (우선순위 순)
-1. **AI 판독 정확도가 핵심 과제.** 사용자가 「Stay Alive」에서 지적한 오류는 모두 판독 오류였다(재생 엔진은 정상): 임시표(♮) 유지 실패, 왼손 16분음표를 8분으로 읽음, 붙임줄 누락으로 같은 음 재타건, 트레몰로 처리. v6에서 **그림 대 그림 대조**와 **"지금 마디 다시 확인"**을 넣었지만 **실제 악보로 정확도를 아직 검증하지 못했다.**
+0. **자동 변환(Audiveris) 정확도가 현재 핵심 과제.** 검수 요청서 6장(알려진 문제)과 8장(개선 후보, 특히 벡터 PDF 직접 읽기)을 보세요.
+1. **AI 판독 정확도(Claude 버전 전용).** 사용자가 「Stay Alive」에서 지적한 오류는 모두 판독 오류였다(재생 엔진은 정상): 임시표(♮) 유지 실패, 왼손 16분음표를 8분으로 읽음, 붙임줄 누락으로 같은 음 재타건, 트레몰로 처리. v6에서 **그림 대 그림 대조**와 **"지금 마디 다시 확인"**을 넣었지만 **실제 악보로 정확도를 아직 검증하지 못했다.**
 2. 가장 확실한 대안: 악보 원본이 MuseScore 2.1로 만든 것이라 musescore.com 원본에서 MusicXML을 받으면 오류 0. 또는 MuseScore 4 PDF 가져오기/Audiveris/homr로 변환 후 수정.
 3. 도돌이표·D.S./Coda는 펼치지 않는다(처음부터 끝까지 한 번).
 4. 마이크는 단음만 인식. 화음 인식은 미구현.
