@@ -1005,7 +1005,9 @@ const Sound = {
     for (const s of b) if (Math.abs(s.midi - midi) < Math.abs(best.midi - midi)) best = s;
     return best;
   },
+  recent: new Map(), // midi → 앱이 이 음을 낸 시각(ms). 마이크가 앱 소리를 피아노로 착각하지 않게.
   note(midi, vel = 0.7, dur = null) {
+    this.recent.set(midi, performance.now());
     const ctx = this.ensure(); if (!ctx || !this.bank) return null;
     const t = ctx.currentTime + 0.005;
     // 같은 건반을 다시 치면 앞 소리를 빠르게 끊는다(실제 피아노의 댐퍼처럼)
@@ -1239,10 +1241,10 @@ window.addEventListener("keydown", (e) => {
   if (e.code === "Home") { e.preventDefault(); restart(); return; }
   if (e.code === "KeyZ") { settings.kbBase = clamp(settings.kbBase - 12, 24, 96); saveSettings(); updateOct(); return; }
   if (e.code === "KeyX") { settings.kbBase = clamp(settings.kbBase + 12, 24, 96); saveSettings(); updateOct(); return; }
-  if (e.code in KEYMAP) { e.preventDefault(); if (e.repeat || kbDown.has(e.code)) return; const m = settings.kbBase + KEYMAP[e.code]; kbDown.set(e.code, m); userNoteOn(m, 0.75, "kb"); }
+  if (e.code in KEYMAP) { e.preventDefault(); if (e.repeat || kbDown.has(e.code)) return; const m = settings.kbBase + KEYMAP[e.code]; kbDown.set(e.code, m); Input.on(m, 0.75, "kb"); }
 });
-window.addEventListener("keyup", (e) => { if (kbDown.has(e.code)) { userNoteOff(kbDown.get(e.code)); kbDown.delete(e.code); } });
-window.addEventListener("blur", () => { kbDown.forEach((m) => userNoteOff(m)); kbDown.clear(); });
+window.addEventListener("keyup", (e) => { if (kbDown.has(e.code)) { Input.off(kbDown.get(e.code)); kbDown.delete(e.code); } });
+window.addEventListener("blur", () => { kbDown.forEach((m) => Input.off(m)); kbDown.clear(); });
 function updateOct() { $("#octLabel").textContent = "도" + octOf(settings.kbBase); }
 
 // Web MIDI
@@ -1262,46 +1264,160 @@ async function connectMIDI() {
     midiAccess.onstatechange = bind; bind();
   } catch (e) { st.textContent = "MIDI를 쓸 수 없어요. 이 화면에서 막혀 있다면 내려받은 파일을 크롬으로 열어 주세요."; }
 }
+
+// ---- 입력 공통: MIDI·마이크·화면 건반 모두 "새로 친 음(onset)" 하나를 한 번만 쓴다 ----
+const Input = {
+  seq: 0, lastOn: new Map(), lat: [],
+  // 같은 음이 다른 MIDI 포트 등에서 8ms 안에 두 번 오면 한 번으로 친다
+  on(midi, vel, source, capturedAt) {
+    const now = performance.now(), last = this.lastOn.get(midi);
+    if (last && last.source !== source && now - last.t < 8) return null;
+    if (last && source === "midi" && last.port && last.port !== this.port && now - last.t < 8) return null;
+    const id = ++this.seq; this.lastOn.set(midi, { t: now, source, port: this.port });
+    if (capturedAt != null) { this.lat.push(now - capturedAt); if (this.lat.length > 200) this.lat.shift(); }
+    userNoteOn(midi, vel, source);
+    return id;
+  },
+  off(midi) { userNoteOff(midi); },
+  latency() { if (!this.lat.length) return null; const a = this.lat.slice().sort((x, y) => x - y); const q = (p) => Math.round(a[Math.min(a.length - 1, Math.floor(p * a.length))]); return { n: a.length, p50: q(0.5), p95: q(0.95) }; },
+};
 function onMidiMsg(ev) {
   const [s, d1, d2] = ev.data; const type = s & 0xf0;
-  if (type === 0x90 && d2 > 0) userNoteOn(d1, d2 / 127, "midi");
-  else if (type === 0x80 || (type === 0x90 && d2 === 0)) userNoteOff(d1);
+  Input.port = ev.target && ev.target.id;
+  if (type === 0x90 && d2 > 0) Input.on(d1, d2 / 127, "midi");
+  else if (type === 0x80 || (type === 0x90 && d2 === 0)) Input.off(d1);
 }
 
-// 마이크 (단음 인식, 자기상관 기반)
+// ---- 마이크 분석기: 음 높이(자기상관)와 새로 친 순간(에너지 급증)을 따로 판단 ----
+// 같은 음을 다시 쳐도 소리 크기가 다시 커지는 순간을 새 타건으로 본다. 길게 누른 음(줄어드는 소리)은 한 번만.
+// 워커 안에서도 그대로 돌도록 바깥 변수를 쓰지 않는다 (toString()으로 워커에 넣음).
+function createMicAnalyzer(sr, opt = {}) {
+  const HOP = 512, WIN = 2048, FMIN = opt.fmin || 50, FMAX = opt.fmax || 1400;
+  const minLag = Math.floor(sr / FMAX), maxLag = Math.min(Math.floor(sr / FMIN), WIN - 64);
+  const ring = new Float32Array(WIN); let filled = 0;
+  const hist = [], hfHist = []; let floor = 0.003, cur = null, wait = 0, tries = 0, tryMidi = null, lastOnsetT = -1, quiet = 0, hop = 0, cand = null, candN = 0, prevRms = 0, prevHf = 0, lastSample = 0;
+  function pitch() {
+    // 최근 WIN 샘플에서 자기상관. 첫 봉우리 중 가장 높은 것의 88% 이상인 가장 짧은 주기
+    const N = WIN; let e0 = 0; for (let i = 0; i < N; i += 2) e0 += ring[i] * ring[i];
+    if (e0 <= 0) return null;
+    const corr = new Float32Array(maxLag + 2); let peak = 0;
+    for (let lag = minLag; lag <= maxLag + 1; lag++) { let s = 0; for (let i = 0; i < N - lag; i += 2) s += ring[i] * ring[i + lag]; corr[lag] = s; if (lag <= maxLag && s > peak) peak = s; }
+    for (let lag = minLag + 1; lag < maxLag; lag++) {
+      if (corr[lag] > peak * 0.88 && corr[lag] >= corr[lag - 1] && corr[lag] >= corr[lag + 1]) {
+        const y1 = corr[lag - 1], y2 = corr[lag], y3 = corr[lag + 1]; const sh = (y3 - y1) / (2 * (2 * y2 - y1 - y3) || 1);
+        const f = sr / (lag + sh); const conf = y2 / e0 * (N / (N - lag));
+        return { midi: Math.round(69 + 12 * Math.log2(f / 440)), f, conf };
+      }
+    }
+    return null;
+  }
+  return {
+    range: [Math.round(69 + 12 * Math.log2(FMIN / 440)), Math.round(69 + 12 * Math.log2(FMAX / 440))],
+    // block: HOP개 샘플, t: 블록 끝 시각(초). 반환: [{type:'on'|'off', midi, conf, t}]
+    feed(block, t) {
+      const ev = [];
+      ring.copyWithin(0, block.length); ring.set(block, WIN - block.length); filled = Math.min(WIN, filled + block.length); hop++;
+      // r: 소리 크기, hf: 고음역 변화량(1차 차분) — 해머가 줄을 칠 때 짧게 커진다
+      let r = 0, hf = 0, last = lastSample; for (let i = 0; i < block.length; i++) { r += block[i] * block[i]; const d = block[i] - last; hf += d * d; last = block[i]; } lastSample = last;
+      r = Math.sqrt(r / block.length); hf = Math.sqrt(hf / block.length);
+      hist.push(r); hfHist.push(hf); if (hist.length > 8) { hist.shift(); hfHist.shift(); }
+      if (r < floor * 3) floor = floor * 0.98 + r * 0.02; // 조용할 때 잡음 수준을 따라감
+      const loud = r > Math.max(0.01, floor * 4);
+      const minOf = (a) => Math.min(...a.slice(0, -1).concat([1]));
+      // 새 타건: 최근(약 80ms) 최저보다 소리가 1.5배 이상(또는 고음역 변화가 2배 이상) 커지고, 직전 블록보다도 커짐. 70ms 안에는 한 번만
+      const rise = (r > minOf(hist) * 1.5 && r > prevRms * 1.25) || (hf > minOf(hfHist) * 2 && hf > prevHf * 1.6 && r > prevRms * 1.05);
+      if (loud && rise && (lastOnsetT < 0 || t - lastOnsetT > 0.07)) { wait = 2; tries = 9; tryMidi = null; lastOnsetT = t; }
+      prevRms = r; prevHf = hf;
+      if (filled < WIN) return ev;
+      if (wait > 0) wait--;
+      if (tries > 0 && wait === 0) {
+        // 타건 약 20ms 뒤부터 음 높이를 재서 두 번 연속 같으면 확정(앞 음 여운이 섞인 순간을 피함).
+        // 낮은 음은 주기가 길어 늦게 정해질 수 있어 몇 번 더 시도(최대 약 120ms)
+        tries--;
+        const p = loud ? pitch() : null;
+        const agreed = p && p.conf > 0.55 && p.midi === tryMidi;
+        tryMidi = p && p.conf > 0.55 ? p.midi : null;
+        if (agreed) { tries = 0; if (cur != null) ev.push({ type: "off", midi: cur, t }); cur = p.midi; cand = p.midi; candN = 3; ev.push({ type: "on", midi: p.midi, conf: +p.conf.toFixed(2), t, onset: true }); }
+      } else if (cur != null && loud && tries === 0 && hop % 3 === 0) {
+        // 이어서 치는(레가토) 다른 음: 소리 크기 급증 없이 높이만 바뀐 경우, 세 번 연속(약 30ms 간격) 같고 확실하면 새 음
+        const p = pitch();
+        if (p && p.conf > 0.75) { if (p.midi === cand) candN++; else { cand = p.midi; candN = 1; } if (p.midi !== cur && candN >= 3) { ev.push({ type: "off", midi: cur, t }); cur = p.midi; ev.push({ type: "on", midi: p.midi, conf: +p.conf.toFixed(2), t, onset: false }); } }
+      }
+      if (!loud) { if (++quiet >= 4 && cur != null) { ev.push({ type: "off", midi: cur, t }); cur = null; } } else quiet = 0;
+      return ev;
+    },
+  };
+}
+
+// 마이크 수집: AudioWorklet(가능하면) → 분석은 Worker(가능하면) → 이벤트만 화면 쪽으로
+const MIC_WORKLET = `class GunbanCap extends AudioWorkletProcessor{constructor(){super();this.b=new Float32Array(512);this.n=0;}process(i){const c=i[0]&&i[0][0];if(c){for(let k=0;k<c.length;k++){this.b[this.n++]=c[k];if(this.n===512){this.port.postMessage({b:this.b.slice(0),t:currentTime});this.n=0;}}}return true;}}registerProcessor('gunban-cap',GunbanCap);`;
 const Mic = {
-  on: false, stream: null, an: null, buf: null, cur: null, cand: null, candN: 0, quiet: 0,
+  on: false, stream: null, node: null, worker: null, an: null, saved: null, cur: null, timer: 0, mode: "",
+  status(msg, on) { const st = $("#micStatus"); st.textContent = msg; st.classList.toggle("on", !!on); },
+  rangeText() { const r = createMicAnalyzer(48000).range; return `${fullName(r[0])}~${fullName(r[1])}, 약 50~1400Hz`; },
   async start() {
-    const st = $("#micStatus");
     try {
       const ctx = Sound.ensure();
       this.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
-      const src = ctx.createMediaStreamSource(this.stream);
-      this.an = ctx.createAnalyser(); this.an.fftSize = 2048; src.connect(this.an);
-      this.buf = new Float32Array(this.an.fftSize); this.on = true;
-      st.textContent = "듣는 중 · 헤드폰을 쓰면 더 잘 알아들어요"; st.classList.add("on"); $("#micBtn").textContent = "끄기";
     } catch (e) {
-      st.textContent = "마이크를 쓸 수 없어요. 이 화면에서는 마이크가 막혀 있을 수 있어요. 내려받은 파일을 크롬으로 열어 주세요.";
+      const n = e && e.name;
+      this.status(n === "NotAllowedError" ? "마이크 권한이 거부됐어요. 주소창 왼쪽 자물쇠 → 마이크 → 허용으로 바꾼 뒤 다시 켜 주세요."
+        : n === "NotFoundError" ? "마이크를 찾지 못했어요. 마이크를 연결한 뒤 다시 켜 주세요."
+        : "마이크를 쓸 수 없어요. 이 화면에서는 마이크가 막혀 있을 수 있어요. 웹 버전(크롬)에서 열어 주세요.");
+      return;
     }
+    const ctx = Sound.ctx, sr = ctx.sampleRate;
+    this.stream.getTracks().forEach((tr) => { tr.onended = () => { if (this.on) { this.stop(); toast("마이크 연결이 끊겼어요"); } }; });
+    const src = ctx.createMediaStreamSource(this.stream);
+    const onEvents = (evs, capturedAt) => evs.forEach((e) => this.handle(e, capturedAt));
+    // 분석기: 워커 → 실패하면 화면 쪽에서
+    let feed = null;
+    try {
+      const code = `${createMicAnalyzer.toString()}\nlet A=null;onmessage=(m)=>{const d=m.data;if(d.init){A=createMicAnalyzer(d.sr);return;}const at=d.at;postMessage({ev:A.feed(d.b,d.t),at});};`;
+      this.worker = new Worker(URL.createObjectURL(new Blob([code], { type: "text/javascript" })));
+      this.worker.postMessage({ init: true, sr });
+      this.worker.onmessage = (m) => onEvents(m.data.ev, m.data.at);
+      feed = (b, t) => this.worker.postMessage({ b, t, at: performance.now() }, [b.buffer]);
+      this.mode = "worker";
+    } catch (e) { const A = createMicAnalyzer(sr); feed = (b, t) => onEvents(A.feed(b, t), performance.now()); this.mode = "main"; }
+    try {
+      try { await ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([MIC_WORKLET], { type: "text/javascript" }))); }
+      catch (e1) { await ctx.audioWorklet.addModule("data:text/javascript;charset=utf-8," + encodeURIComponent(MIC_WORKLET)); } // 파일로 열었을 때(origin null)는 blob이 막힘
+      this.node = new AudioWorkletNode(ctx, "gunban-cap");
+      const mute = ctx.createGain(); mute.gain.value = 0; src.connect(this.node); this.node.connect(mute); mute.connect(ctx.destination);
+      this.node.port.onmessage = (m) => feed(m.data.b, m.data.t);
+      this.mode += "+worklet";
+    } catch (e) {
+      // 예비: 10ms마다 최근 512샘플을 읽음 (화면 그리기와 상관없이)
+      this.an = ctx.createAnalyser(); this.an.fftSize = 512; src.connect(this.an);
+      this.timer = setInterval(() => { const b = new Float32Array(512); this.an.getFloatTimeDomainData(b); feed(b, ctx.currentTime); }, 1000 * 512 / sr);
+      this.mode += "+poll"; this.workletError = String(e && (e.message || e)).slice(0, 120);
+    }
+    this.on = true;
+    // 스피커에서 나는 앱 소리를 피아노로 착각하지 않도록 앱 소리를 잠시 끈다 (끄면 되돌림)
+    const keys = ["accomp", "guide", "metro", "inputSound"]; const loud = keys.filter((k) => settings[k]);
+    if (loud.length) { this.saved = Object.fromEntries(keys.map((k) => [k, settings[k]])); keys.forEach((k) => { settings[k] = false; const el = $("#" + k); if (el) el.checked = false; }); $("#metroBtn").setAttribute("aria-pressed", "false"); toast("마이크가 앱 소리를 피아노 소리로 착각하지 않도록 반주·안내음·메트로놈·입력음을 잠시 껐어요. 마이크를 끄면 다시 켜져요."); }
+    this.status(`듣는 중 · 한 번에 한 음 · ${this.rangeText()} · 헤드폰을 쓰면 더 정확해요`, true); $("#micBtn").textContent = "끄기";
   },
-  stop() { this.on = false; if (this.stream) this.stream.getTracks().forEach((t) => t.stop()); if (this.cur != null) userNoteOff(this.cur); this.cur = null; $("#micStatus").textContent = "한 번에 한 음만 알아들어요"; $("#micStatus").classList.remove("on"); $("#micBtn").textContent = "켜기"; },
-  detect() {
-    if (!this.on || (this.tick = (this.tick || 0) + 1) % 2) return;
-    this.an.getFloatTimeDomainData(this.buf);
-    const b = this.buf, N = b.length; let rms = 0; for (let i = 0; i < N; i++) rms += b[i] * b[i]; rms = Math.sqrt(rms / N);
-    let midi = null;
-    if (rms > 0.012) {
-      const sr = Sound.ctx.sampleRate; const minLag = Math.floor(sr / 1400), maxLag = Math.floor(sr / 50);
-      let best = 0, bestLag = -1; const corr = new Float32Array(maxLag + 2);
-      for (let lag = minLag; lag <= maxLag; lag++) { let s = 0; for (let i = 0; i < N - lag; i += 2) s += b[i] * b[i + lag]; corr[lag] = s; }
-      let peak = 0; for (let lag = minLag; lag <= maxLag; lag++) peak = Math.max(peak, corr[lag]);
-      for (let lag = minLag + 1; lag < maxLag; lag++) { if (corr[lag] > peak * 0.88 && corr[lag] >= corr[lag - 1] && corr[lag] >= corr[lag + 1]) { bestLag = lag; best = corr[lag]; break; } }
-      if (bestLag > 0 && best > 0) { const y1 = corr[bestLag - 1], y2 = corr[bestLag], y3 = corr[bestLag + 1]; const sh = (y3 - y1) / (2 * (2 * y2 - y1 - y3) || 1); const f = sr / (bestLag + sh); midi = Math.round(69 + 12 * Math.log2(f / 440)); }
-    }
-    if (midi != null && midi === this.cand) this.candN++; else { this.cand = midi; this.candN = 1; }
-    if (midi != null && this.candN >= 2 && midi !== this.cur) { if (this.cur != null) userNoteOff(this.cur); this.cur = midi; const keep = settings.inputSound; settings.inputSound = false; userNoteOn(midi, 0.7, "mic"); settings.inputSound = keep; }
-    if (midi == null) { if (++this.quiet > 3 && this.cur != null) { userNoteOff(this.cur); this.cur = null; } } else this.quiet = 0;
-  }
+  handle(e, capturedAt) {
+    if (!this.on) return;
+    if (e.type === "off") { if (this.cur === e.midi) { this.cur = null; Input.off(e.midi); } return; }
+    // 앱이 방금(0.25초 안) 낸 같은 음은 무시 (스피커 → 마이크)
+    const r = Sound.recent.get(e.midi); if (r && performance.now() - r < 250) return;
+    if (this.cur != null) Input.off(this.cur);
+    this.cur = e.midi; Input.on(e.midi, 0.7, "mic", capturedAt);
+  },
+  stop() {
+    this.on = false;
+    if (this.stream) this.stream.getTracks().forEach((t) => { t.onended = null; t.stop(); });
+    if (this.node) { try { this.node.disconnect(); } catch (e) {} this.node = null; }
+    if (this.worker) { this.worker.terminate(); this.worker = null; }
+    clearInterval(this.timer); this.an = null;
+    if (this.cur != null) Input.off(this.cur); this.cur = null;
+    if (this.saved) { Object.entries(this.saved).forEach(([k, v]) => { settings[k] = v; const el = $("#" + k); if (el) el.checked = !!v; }); $("#metroBtn").setAttribute("aria-pressed", String(!!settings.metro)); saveSettings(); this.saved = null; }
+    this.status("한 번에 한 음만 알아들어요"); $("#micBtn").textContent = "켜기";
+  },
+  reset() { if (this.cur != null) Input.off(this.cur); this.cur = null; },
 };
 
 /* ============================================================
@@ -1587,9 +1703,9 @@ function keyFromPoint(x, y) {
   if (ly < blackH) for (let m = kb.lo; m <= kb.hi; m++) { if (!isBlack(m)) continue; const g = keyGeom(m, W); if (lx >= g.x && lx <= g.x + g.w) return m; }
   const i = Math.floor(lx / (W / kb.whites.length)); return kb.whites[clamp(i, 0, kb.whites.length - 1)];
 }
-keysC.addEventListener("pointerdown", (e) => { e.preventDefault(); keysC.setPointerCapture(e.pointerId); const m = keyFromPoint(e.clientX, e.clientY); ptrNotes.set(e.pointerId, m); userNoteOn(m, 0.75, "screen"); });
-keysC.addEventListener("pointermove", (e) => { if (!ptrNotes.has(e.pointerId)) return; const m = keyFromPoint(e.clientX, e.clientY); const old = ptrNotes.get(e.pointerId); if (m !== old) { userNoteOff(old); ptrNotes.set(e.pointerId, m); userNoteOn(m, 0.7, "screen"); } });
-const ptrUp = (e) => { if (!ptrNotes.has(e.pointerId)) return; userNoteOff(ptrNotes.get(e.pointerId)); ptrNotes.delete(e.pointerId); };
+keysC.addEventListener("pointerdown", (e) => { e.preventDefault(); keysC.setPointerCapture(e.pointerId); const m = keyFromPoint(e.clientX, e.clientY); ptrNotes.set(e.pointerId, m); Input.on(m, 0.75, "screen"); });
+keysC.addEventListener("pointermove", (e) => { if (!ptrNotes.has(e.pointerId)) return; const m = keyFromPoint(e.clientX, e.clientY); const old = ptrNotes.get(e.pointerId); if (m !== old) { Input.off(old); ptrNotes.set(e.pointerId, m); Input.on(m, 0.7, "screen"); } });
+const ptrUp = (e) => { if (!ptrNotes.has(e.pointerId)) return; Input.off(ptrNotes.get(e.pointerId)); ptrNotes.delete(e.pointerId); };
 keysC.addEventListener("pointerup", ptrUp); keysC.addEventListener("pointercancel", ptrUp);
 // 낙하 영역 드래그로 위치 이동
 let drag = null;
@@ -1610,7 +1726,6 @@ function frame(ts) {
       const cd = $("#countdown"); cd.hidden = E.countIn <= 0; cd.textContent = left > 0 ? String(E.countTotal - left + 1) : "";
     } else if (!E.waiting) advance(dt * settings.rate);
   }
-  Mic.detect();
   drawFall(); drawKeys();
   Score.sync(false);
   const mi = song ? measureAt(E.pos) : 0; if (mi !== lastMeasure) { lastMeasure = mi; updateReadouts(); }
@@ -1736,7 +1851,7 @@ function renderFlags() {
   if (fixed.length) chips("대조하며 고친 마디:", fixed.filter((f) => song && f.m < song.measures.length).map((f) => [f.m, f.note]), "fixed", go);
 }
 function setSong(raw, meta) {
-  pause();
+  pause(); Mic.reset();
   const prevCloudId = current && current.cloudId;
   if (meta.persist !== false && settings.loopOn && !meta.keepLoop) { settings.loopOn = false; $("#loopOn").checked = false; $("#loopBtn").setAttribute("aria-pressed", "false"); saveSettings(); }
   song = buildSong(raw, {});
@@ -2081,7 +2196,7 @@ $("#diagBtn").onclick = async () => {
   // 악보 내용(음표)은 넣지 않는다: 위치 기록, 설정, 곡 크기만
   const info = { build: (document.querySelector('meta[name="gunban-build"]') || {}).content || "local", kind: current && current.kind, measures: song ? song.measures.length : 0,
     steps: song ? song.steps.length : 0, cursorSteps: Score.steps.length, settings: { mode: settings.mode, hands: settings.hands, loopOn: settings.loopOn, loopA: settings.loopA, loopB: settings.loopB, rate: settings.rate },
-    unexpected: PosLog.unexpected().length, log: PosLog.list.slice(-80) };
+    unexpected: PosLog.unexpected().length, input: { latencyMs: Input.latency(), mic: Mic.on ? Mic.mode : "off" }, log: PosLog.list.slice(-80) };
   const txt = JSON.stringify(info);
   try { await navigator.clipboard.writeText(txt); toast(`진단 기록을 복사했어요 (이유 없는 역행 ${info.unexpected}번)`); }
   catch (e) { console.log(txt); toast("복사하지 못했어요. 개발자 도구 콘솔에 출력했어요."); }
@@ -2630,7 +2745,7 @@ function boot() {
   if (matchMedia("(pointer: coarse)").matches) $("#hintKeys").hidden = true;
   requestAnimationFrame(frame);
 }
-window.GunbanNavi = { parseMusicXML, parseMIDI, jsonToMusicXML, buildSong, mxlToXml, get song() { return song; }, E, settings, ODE, seek, play, pause, userNoteOn, setMode, setHands, setLoopRange, setRate, Score, PosLog, loopRange, repeatOrder };
+window.GunbanNavi = { parseMusicXML, parseMIDI, jsonToMusicXML, buildSong, mxlToXml, get song() { return song; }, E, settings, ODE, seek, play, pause, userNoteOn, setMode, setHands, setLoopRange, setRate, Score, PosLog, loopRange, repeatOrder, Input, Mic, createMicAnalyzer };
 window.loopRangeForTest = () => loopRange();
 boot();
 </script>

@@ -386,6 +386,94 @@ async function openPage(browser, opts = {}) {
     ok('도돌이표 반복 끄기/켜기', r.off === 6 && r.on === 8 && /마디 3 \/ 6/.test(r.offLabel), JSON.stringify([r.off, r.on, r.offLabel]));
     ok('페이지 오류 없음', errs.length === 0, errs.join(' | ')); await p.close(); }
 
+  // 14) 실제 피아노 입력 (이슈 #14 PR 3): 새로 친 순간(onset) 인식, 같은 음 재타건, 공통 입력
+  { const { p, errs } = await openPage(browser);
+    const r = await p.evaluate(() => {
+      // 합성 피아노 소리: 기본음+배음, 5ms 올라가고 줄어드는 소리, 해머 타격음(4ms 잡음)
+      const run = (sr, strikes, dur, noise = 0) => {
+        const N = Math.round(dur * sr); const x = new Float32Array(N); let seed = 7; const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647) * 2 - 1;
+        for (const s of strikes) { const i0 = Math.round(s.t * sr), i1 = s.stopAt ? Math.round(s.stopAt * sr) : N;
+          for (let i = i0; i < N; i++) { const tt = (i - i0) / sr; let env = Math.min(1, tt / 0.005) * Math.exp(-tt / 0.8) * s.amp; if (i >= i1) env *= Math.exp(-(i - i1) / sr / 0.01); if (tt > 0.01 && env < 1e-5) break;
+            x[i] += env * (Math.sin(2 * Math.PI * s.f * tt) + 0.5 * Math.sin(4 * Math.PI * s.f * tt) + 0.3 * Math.sin(6 * Math.PI * s.f * tt)) + (tt < 0.004 ? rnd() * 0.3 * s.amp * (1 - tt / 0.004) : 0); } }
+        if (noise) for (let i = 0; i < N; i++) x[i] += rnd() * noise;
+        const A = GunbanNavi.createMicAnalyzer(sr); const ev = [];
+        for (let i = 0; i + 512 <= N; i += 512) ev.push(...A.feed(x.slice(i, i + 512), (i + 512) / sr));
+        const ons = ev.filter((e) => e.type === 'on');
+        window.__delays = (window.__delays || []).concat(ons.map((e) => { const st = strikes.filter((x) => x.t <= e.t).pop(); return st ? e.t - st.t : 0; }));
+        return ons.map((e) => e.midi);
+      };
+      const rep = (pedal) => Array.from({ length: 10 }, (_, k) => ({ t: 0.1 + k * 0.3, f: 440, amp: 0.3, stopAt: 0.1 + k * 0.3 + (pedal ? 0.3 : 0.27) }));
+      const out = {
+        repDamped: run(48000, rep(false), 3.5), repPedal: run(48000, rep(true), 3.5), noisyRep: run(48000, rep(false), 3.5, 0.01),
+        held: run(48000, [{ t: 0.1, f: 440, amp: 0.3 }], 3),
+        gpt: run(48000, [{ t: 0.1, f: 440, amp: 0.1 }, { t: 0.6, f: 440, amp: 0.25 }], 1.5),
+        legato: run(48000, [{ t: 0.1, f: 440, amp: 0.3, stopAt: 0.62 }, { t: 0.6, f: 523.25, amp: 0.22 }], 1.4),
+        octaves: [run(48000, [{ t: 0.1, f: 110, amp: 0.3 }], 0.8), run(44100, [{ t: 0.1, f: 880, amp: 0.3 }], 0.8)],
+        silence: run(48000, [], 2, 0.03),
+        range: GunbanNavi.createMicAnalyzer(48000).range,
+      };
+      const d = window.__delays.slice().sort((a, b) => a - b); out.delayP95 = Math.round(d[Math.floor(d.length * 0.95)] * 1000); out.delayMax = Math.round(d[d.length - 1] * 1000);
+      // 따라치기: 같은 음 10개 — 10번 치면 10칸, 한 번 길게 누르면 1칸
+      const G = GunbanNavi; const raw = { title: 'rep', tempos: [{ q: 0, bpm: 120 }], measures: [{ num: 1, startQ: 0, lenQ: 10, beats: 10, beatType: 4 }],
+        notes: Array.from({ length: 10 }, (_, k) => ({ midi: 60, startQ: k, durQ: 1, staff: 1, hand: 'R', measure: 0 })) };
+      setSong(raw, { kind: 'musicxml', name: 'rep', persist: false });
+      G.settings.countIn = false; G.setMode('wait'); G.setHands('both'); G.seek(0, false, 'test'); G.play();
+      out.waitSetup = true;
+      // 같은 음이 두 MIDI 포트에서 거의 동시에 오면 한 번
+      const before = G.Input.seq; onMidiMsg({ data: [0x90, 64, 100], target: { id: 'a' } }); onMidiMsg({ data: [0x90, 64, 100], target: { id: 'b' } }); out.dup = G.Input.seq - before;
+      // 앱이 방금 낸 소리는 마이크 입력으로 받지 않음
+      G.Mic.on = true; G.Mic.cur = null; Sound.recent.set(67, performance.now()); const b2 = G.Input.seq; G.Mic.handle({ type: 'on', midi: 67 }); out.feedback = G.Input.seq - b2;
+      Sound.recent.set(67, performance.now() - 1000); G.Mic.handle({ type: 'on', midi: 67 }); out.real = G.Input.seq - b2; G.Mic.handle({ type: 'off', midi: 67 }); G.Mic.on = false;
+      return out;
+    });
+    // 시간이 흐르는 동안: 누른 채로 있으면 1칸, 기다릴 때마다 새로 치면 한 칸씩
+    const w = await p.evaluate(async () => {
+      const G = GunbanNavi; G.setRate(1.5); G.Input.on(60, 0.7, 'kb');
+      await new Promise((r) => setTimeout(r, 900)); const held = G.E.waitIdx; // 0.9초 동안 누르고만 있음
+      for (let k = 0; k < 30 && !G.E.finished; k++) { for (let i = 0; i < 50 && !G.E.waiting && !G.E.finished; i++) await new Promise((r) => setTimeout(r, 20)); G.Input.off(60); G.Input.on(60, 0.7, 'kb'); }
+      const res = { held, ten: G.E.waitIdx, finished: G.E.finished, mistakes: G.E.mistakes }; G.Input.off(60); G.pause(); return res;
+    });
+    r.held1 = w.held; r.ten = w.ten;
+    const tenA = (a) => a.length === 10 && a.every((m) => m === 69);
+    ok('마이크: 같은 음 10번 다시 치기 → 10번 (댐퍼·페달·잡음)', tenA(r.repDamped) && tenA(r.repPedal) && tenA(r.noisyRep), JSON.stringify([r.repDamped.length, r.repPedal.length, r.noisyRep.length]));
+    ok('마이크: 길게 누른 음은 1번, 무음·잡음은 0번', JSON.stringify(r.held) === '[69]' && r.silence.length === 0, JSON.stringify([r.held, r.silence]));
+    ok('마이크: 이어 치기·소리 커짐·옥타브 구분', JSON.stringify(r.legato) === '[69,72]' && JSON.stringify(r.gpt) === '[69,69]' && JSON.stringify(r.octaves) === '[[45],[81]]', JSON.stringify(r));
+    ok('마이크: 타건 → 인식 지연 (합성 소리, 분석만) p95 < 120ms', r.delayP95 < 120, `p95 ${r.delayP95}ms, 최대 ${r.delayMax}ms`);
+    ok('마이크 음역 표시값 (약 50~1400Hz)', r.range[0] === 31 && r.range[1] === 89, JSON.stringify(r.range));
+    ok('따라치기: 같은 음은 새로 칠 때마다 한 칸, 누르고 있으면 한 칸', r.held1 === 1 && r.ten === 10, JSON.stringify([r.held1, r.ten]));
+    ok('두 MIDI 포트의 같은 음은 한 번 / 앱 소리는 마이크로 안 받음', r.dup === 1 && r.feedback === 0 && r.real === 1, JSON.stringify([r.dup, r.feedback, r.real]));
+    ok('페이지 오류 없음', errs.length === 0, errs.join(' | ')); await p.close(); }
+
+  // 14-2) 마이크 전체 흐름: 가짜 마이크(합성 소리) → 워클릿 → 워커 분석 → 입력, 권한 거부 안내, 앱 소리 끄고 되돌리기
+  { const b2 = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required'] });
+    const fake = () => {
+      window.__denyMic = false;
+      navigator.mediaDevices.getUserMedia = async () => {
+        if (window.__denyMic) throw Object.assign(new Error('denied'), { name: 'NotAllowedError' });
+        const ac = new AudioContext(); const dst = ac.createMediaStreamDestination(); const t0 = ac.currentTime + 0.3;
+        for (let k = 0; k < 4; k++) { const o = ac.createOscillator(); o.frequency.value = 261.63; const g = ac.createGain(); g.gain.setValueAtTime(0, 0); g.gain.setValueAtTime(0, t0 + k * 0.5); g.gain.linearRampToValueAtTime(0.4, t0 + k * 0.5 + 0.005); g.gain.exponentialRampToValueAtTime(0.01, t0 + k * 0.5 + 0.45); g.gain.setValueAtTime(0, t0 + k * 0.5 + 0.46); o.connect(g); g.connect(dst); o.start(); }
+        window.__fakeCtx = ac; return dst.stream;
+      };
+    };
+    const p = await b2.newPage(); const errs = []; p.on('pageerror', (e) => errs.push(e.message)); await p.addInitScript(fake);
+    await p.route('**/*', (r) => (r.request().url().startsWith('file:') ? r.continue() : r.abort()));
+    await p.goto(PAGE); await p.waitForTimeout(1000);
+    const r = await p.evaluate(async () => {
+      const G = GunbanNavi; G.settings.accomp = true; G.settings.metro = true;
+      const got = []; const orig = window.userNoteOn; const before = G.Input.seq;
+      window.__deny = async () => { window.__denyMic = true; await G.Mic.start(); const msg = document.querySelector('#micStatus').textContent; window.__denyMic = false; return msg; };
+      const denied = await window.__deny();
+      await G.Mic.start(); const mode = G.Mic.mode; const offWhileOn = [G.settings.accomp, G.settings.metro];
+      await new Promise((r) => setTimeout(r, 2800));
+      const n = G.Input.seq - before; const lat = G.Input.latency(); const status = document.querySelector('#micStatus').textContent;
+      const err = G.Mic.workletError; G.Mic.stop(); return { err, denied, mode, n, lat, status, offWhileOn, restored: [G.settings.accomp, G.settings.metro] };
+    });
+    ok('마이크 권한 거부 안내', /권한이 거부/.test(r.denied), r.denied);
+    ok('마이크 전체 흐름: 4번 친 소리 → 입력 4번 (워클릿·워커)', r.n === 4 && /worker\+worklet/.test(r.mode), JSON.stringify([r.mode, r.err, r.n]));
+    ok('마이크 켜는 동안 앱 소리 끄고, 끄면 되돌림 · 음역 표시', JSON.stringify(r.offWhileOn) === '[false,false]' && JSON.stringify(r.restored) === '[true,true]' && /1400Hz/.test(r.status), JSON.stringify([r.offWhileOn, r.restored, r.status]));
+    ok('페이지 오류 없음 (마이크)', errs.length === 0, errs.join(' | '));
+    await b2.close(); }
+
   // 13) 악보 커서 ↔ 연주 위치 (OSMD 1.8.9 필요): 못갖춘마디·박자 넘침 마디·도돌이표가 있어도 커서가 연주 위치 마디에 있고 뒤로 가지 않음
   if (fs.existsSync(OSMD_LOCAL)) {
     const { p, errs } = await openPage(browser, { osmd: true });
