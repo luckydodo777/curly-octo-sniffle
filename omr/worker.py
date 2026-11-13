@@ -13,6 +13,7 @@
   python omr/worker.py --check            # 대기 작업이 있으면 종료코드 0, 없으면 10 (설치 생략용)
   python omr/worker.py --run --audiveris /path/to/Audiveris [--linger 600]
   python omr/worker.py --local IN_DIR OUT_DIR --audiveris BIN   # Firebase 없이 변환만 (시험용)
+  python omr/worker.py --fail-queued "메시지"   # 대기 작업을 모두 실패로 표시 (준비 단계 실패 시)
 
 환경변수: FIREBASE_SERVICE_ACCOUNT (서비스 계정 JSON 전체 문자열)
 개인정보: 로그에는 작업 ID와 결과 요약만 남기고 파일 이름·내용은 남기지 않는다(공개 저장소의 로그는 누구나 볼 수 있음).
@@ -127,6 +128,21 @@ def get_big(db, base, field, n):
     return "".join((db.document(f"{base}/chunks/{field}_{i}").get().to_dict() or {}).get("data", "") for i in range(n or 0))
 
 
+def fail_queued(msg):
+    """대기열의 작업을 모두 실패로 표시하고 대기열에서 뺀다 (워크플로 준비 단계 실패 시)."""
+    db = firestore()
+    n = 0
+    for q in db.collection("omrQueue").limit(50).stream():
+        qd = q.to_dict() or {}
+        uid = qd.get("uid")
+        if uid:
+            db.document(f"users/{uid}/omrJobs/{q.id}").set({"status": "failed", "error": msg[:300], "finishedAt": int(time.time() * 1000)}, merge=True)
+        q.reference.delete()
+        n += 1
+    print(f"대기 작업 {n}개를 실패로 표시")
+    return 0
+
+
 def run_mode(args):
     db = firestore()
     if args.check:
@@ -211,5 +227,8 @@ if __name__ == "__main__":
     ap.add_argument("--run", action="store_true")
     ap.add_argument("--linger", type=int, default=0, help="처리 후 새 작업을 기다릴 초")
     ap.add_argument("--local", nargs=2, metavar=("IN_DIR", "OUT_DIR"))
+    ap.add_argument("--fail-queued", metavar="MESSAGE")
     a = ap.parse_args()
+    if a.fail_queued:
+        sys.exit(fail_queued(a.fail_queued))
     sys.exit(local_mode(a) if a.local else run_mode(a))

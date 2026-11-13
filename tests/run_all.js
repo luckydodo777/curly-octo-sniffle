@@ -526,6 +526,18 @@ async function openPage(browser, opts = {}) {
     ok('마이크 화음 흐름: 화음 4번 → 4번, 들린 음은 모두 친 음 / 같은 음 연타', r.seq.n === 4 && r.seq.subset && r.single === '60 60 64 67', JSON.stringify([r.seq, r.single]));
     ok('페이지 오류 없음', errs.length === 0, errs.join(' | ')); await p.close(); }
 
+  // 16) 화면이 아주 작거나 숨겨져도 재생·화면 갱신이 멈추지 않음 (배포본 점검에서 찾은 오류: roundRect 반지름 음수)
+  { const { p, errs } = await openPage(browser);
+    const r = await p.evaluate(async () => {
+      const G = GunbanNavi; G.settings.countIn = false; G.setMode('listen'); G.setRate(1.5); G.seek(0, false, 'test');
+      document.querySelectorAll('#fall, #keys').forEach((c) => { c.style.width = '0px'; c.style.height = '0px'; c.parentElement.style.width = '1px'; });
+      window.dispatchEvent(new Event('resize')); G.play();
+      let thrown = null; for (let i = 0; i < 40; i++) { await new Promise((r) => setTimeout(r, 20)); try { frame(performance.now()); } catch (e) { thrown = e.message; } }
+      const pos = G.E.pos; G.pause(); return { thrown, pos, frameErr: G.PosLog.list.filter((e) => e.reason.startsWith('frame-error')).length };
+    });
+    ok('화면이 0 크기여도 오류 없이 재생 계속', r.thrown === null && r.pos > 0.3 && r.frameErr === 0, JSON.stringify(r));
+    ok('페이지 오류 없음', errs.length === 0, errs.join(' | ')); await p.close(); }
+
   // 13) 악보 커서 ↔ 연주 위치 (OSMD 1.8.9 필요): 못갖춘마디·박자 넘침 마디·도돌이표가 있어도 커서가 연주 위치 마디에 있고 뒤로 가지 않음
   if (fs.existsSync(OSMD_LOCAL)) {
     const { p, errs } = await openPage(browser, { osmd: true });
