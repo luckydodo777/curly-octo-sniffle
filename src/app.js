@@ -23,7 +23,7 @@ const STORE_KEY = "gunban-navi-v1";
 const settings = Object.assign({
   rate: 1, mode: "listen", hands: "both", loopOn: false, loopA: 1, loopB: 4, autoSpeed: false,
   accomp: true, guide: false, countIn: true, inputSound: true, volume: 0.8, metro: false,
-  soundSet: "sal", steadyTempo: false, view: "all", labels: "sol", fingers: true, range: "fit", zoom: 1, scoreZoom: 0.8, kbBase: 60
+  soundSet: "sal", steadyTempo: false, expandRepeats: true, view: "all", labels: "sol", fingers: true, range: "fit", zoom: 1, scoreZoom: 0.8, kbBase: 60
 }, (() => { try { return JSON.parse(localStorage.getItem(STORE_KEY) || "{}"); } catch (e) { return {}; } })());
 function saveSettings() { try { localStorage.setItem(STORE_KEY, JSON.stringify(settings)); } catch (e) {} }
 
@@ -92,7 +92,7 @@ function parseMusicXML(xmlText, opts = {}) {
   if (!title) { const cw = root.querySelector("credit credit-words"); if (cw) title = cw.textContent.trim(); }
   const parts = directKids(root, "part");
   if (!parts.length) throw new Error("악보에 파트가 없어요.");
-  const measures = []; const tempos = []; const notes = [];
+  const measures = []; const tempos = []; const notes = []; let jumps = false;
   // opts.fit: 악보 인식(OMR) 결과 점검. 박자표와 길이가 다른 마디를 "확인 필요"로 표시만 하고 음의 시간은 바꾸지 않는다.
   //   (예전에는 넘치는 성부를 비율로 줄였는데, 양손 동시성과 악보 커서 위치가 어긋나서 그만둠 — 이슈 #14)
   const partInfo = []; const fitFlags = new Map();
@@ -102,6 +102,22 @@ function parseMusicXML(xmlText, opts = {}) {
     directKids(part, "measure").forEach((m, mi) => {
       let pos = 0, maxPos = 0, lastStart = 0, idx = -1;
       const numAttr = m.getAttribute("number");
+      let rep = null; // 도돌이표·1/2번 괄호 (첫 파트 기준)
+      if (pi === 0) {
+        for (const bl of m.querySelectorAll(":scope > barline")) {
+          const r = bl.querySelector("repeat"), en = bl.querySelector("ending");
+          if (r || en) rep = rep || {};
+          if (r && r.getAttribute("direction") === "forward") rep.fwd = true;
+          if (r && r.getAttribute("direction") === "backward") rep.bwd = Math.max(2, parseInt(r.getAttribute("times")) || 2);
+          if (en) {
+            const nums = (en.getAttribute("number") || "").split(/[,\s]+/).map((x) => parseInt(x)).filter((x) => x > 0);
+            const t = en.getAttribute("type");
+            if (t === "start") rep.endStart = nums; else rep.endStop = true;
+            if (nums.length) rep.ending = nums;
+          }
+        }
+        if (m.querySelector("sound[dacapo], sound[dalsegno], sound[tocoda], sound[coda], sound[segno], sound[fine]") || m.querySelector("direction-type > segno, direction-type > coda")) jumps = true;
+      }
       for (const el of m.children) {
         const nn = el.nodeName;
         if (nn === "attributes") {
@@ -180,7 +196,7 @@ function parseMusicXML(xmlText, opts = {}) {
         if (maxPos <= 1e-6) lenQ = nominal;
         else if (maxPos < nominal - 1e-6 && !(mi === 0 || implicit)) lenQ = nominal;
         else lenQ = maxPos;
-        measures.push({ num: /^\d+$/.test(numAttr || "") ? parseInt(numAttr) : mi + 1, startQ: qStart, lenQ, beats, beatType });
+        measures.push({ num: /^\d+$/.test(numAttr || "") ? parseInt(numAttr) : mi + 1, startQ: qStart, lenQ, beats, beatType, ...(rep ? { rep } : {}) });
       } else {
         lenQ = measures[mi] ? measures[mi].lenQ : (maxPos || nominal);
       }
@@ -189,7 +205,7 @@ function parseMusicXML(xmlText, opts = {}) {
     partInfo.push({ staves, clefs });
   });
   assignHandsXML(notes, partInfo);
-  return { title: title || "제목 없는 악보", composer, notes, measures, tempos, fitFlags: [...fitFlags].map(([m, t]) => ({ m, issues: [t] })) };
+  return { title: title || "제목 없는 악보", composer, notes, measures, tempos, jumps, fitFlags: [...fitFlags].map(([m, t]) => ({ m, issues: [t] })) };
 }
 // 자동 변환 악보의 "확인 필요" 목록 = 앱이 찾은 박자 문제 + 변환 서버가 남긴 안내(omrNotes: [{m, text}])
 function omrFlags(raw, notes) {
@@ -438,7 +454,44 @@ function fmtNum(x) { return Math.round(x); }
 /* ============================================================
    5) Song 모델: 템포 맵으로 초 단위 타임라인 계산
    ============================================================ */
+// 도돌이표·1/2번 괄호를 연주 순서로 펼친다. 결과 마디마다 src(원본 마디 순번)와 pass(몇 번째 연주)를 단다.
+// D.C./D.S./Coda/Fine은 아직 펼치지 않는다(raw.jumps로 알림).
+function repeatOrder(ms) {
+  // 괄호(ending) 구간: start가 있는 마디부터 stop/discontinue 마디까지 같은 번호
+  const endingOf = new Array(ms.length).fill(null); let cur = null;
+  ms.forEach((m, i) => { const r = m.rep || {}; if (r.endStart) cur = r.endStart; if (cur) endingOf[i] = cur; if (r.endStop) cur = null; });
+  if (!ms.some((m) => m.rep && (m.rep.bwd || m.rep.fwd))) return ms.map((m, i) => ({ src: i, pass: 1 }));
+  const order = []; const jumped = new Map(); let start = 0, pass = 1, i = 0, guard = 0;
+  while (i < ms.length && guard++ < 4000) {
+    const r = ms[i].rep || {};
+    if (r.fwd && !(i === start && pass > 1)) { start = i; pass = 1; }
+    if (endingOf[i] && !endingOf[i].includes(pass)) { i++; continue; } // 이번 회차가 아닌 괄호는 건너뜀
+    order.push({ src: i, pass });
+    if (r.bwd) {
+      const done = jumped.get(i) || 0;
+      if (done < r.bwd - 1) { jumped.set(i, done + 1); pass++; i = start; continue; }
+      jumped.set(i, 0); pass = 1; start = i + 1;
+    } else if (endingOf[i] && (i + 1 >= ms.length || !endingOf[i + 1])) { pass = 1; start = i + 1; } // 마지막 괄호가 끝나면 새 구간
+    i++;
+  }
+  return order;
+}
+function expandRepeats(raw) {
+  const ms = raw.measures; const order = repeatOrder(ms);
+  if (order.length === ms.length && order.every((o, k) => o.src === k)) return null;
+  const measures = []; let q = 0;
+  order.forEach((o, k) => { const m = ms[o.src]; measures.push({ ...m, startQ: q, src: o.src, pass: o.pass }); q += m.lenQ; });
+  const bySrc = new Map(); raw.notes.forEach((n) => { if (!bySrc.has(n.measure)) bySrc.set(n.measure, []); bySrc.get(n.measure).push(n); });
+  const notes = [];
+  order.forEach((o, k) => { const d = measures[k].startQ - ms[o.src].startQ; for (const n of bySrc.get(o.src) || []) notes.push({ ...n, startQ: n.startQ + d, measure: k, pass: o.pass }); });
+  // 빠르기표: 원본 마디 안 위치 그대로, 그 마디가 연주될 때마다
+  const tempos = [];
+  for (const t of raw.tempos || []) { let si = 0; while (si + 1 < ms.length && ms[si + 1].startQ <= t.q + 1e-6) si++; order.forEach((o, k) => { if (o.src === si) tempos.push({ ...t, q: measures[k].startQ + (t.q - ms[si].startQ) }); }); }
+  return { ...raw, notes, measures, tempos, expanded: true };
+}
 function buildSong(raw, extra) {
+  const srcMeasures = raw.measures;
+  if (settings.expandRepeats !== false) { const ex = expandRepeats(raw); if (ex) raw = ex; }
   let tempos = (raw.tempos || []).filter((t) => t.bpm > 0 && isFinite(t.q)).sort((a, b) => a.q - b.q);
   if (settings.steadyTempo && tempos.length) tempos = [{ q: 0, bpm: tempos[0].bpm }];
   const dedup = []; tempos.forEach((t) => { if (dedup.length && Math.abs(dedup[dedup.length - 1].q - t.q) < 1e-6) dedup[dedup.length - 1] = t; else dedup.push(t); });
@@ -456,7 +509,7 @@ function buildSong(raw, extra) {
   // 같은 순간인지는 초가 아니라 악보 시간(4분음표 단위)으로 판단한다
   const sameQ = (a, b) => Math.abs(a - b) < 1e-6;
   for (const n of all) { const prev = notes[notes.length - 1]; if (prev && prev.midi === n.midi && sameQ(prev.startQ, n.startQ)) { prev.end = Math.max(prev.end, n.end); prev.durQ = Math.max(prev.durQ, n.durQ); if (!prev.finger) prev.finger = n.finger; continue; } notes.push(n); }
-  const measures = raw.measures.map((m, i) => ({ ...m, idx: i, start: secAt(m.startQ), end: secAt(m.startQ + m.lenQ) }));
+  const measures = raw.measures.map((m, i) => ({ ...m, idx: i, src: m.src ?? i, pass: m.pass || 1, start: secAt(m.startQ), end: secAt(m.startQ + m.lenQ) }));
   const lastNoteEnd = notes.reduce((m, n) => Math.max(m, n.end), 0);
   const duration = Math.max(measures.length ? measures[measures.length - 1].end : 0, lastNoteEnd);
   const beats = [];
@@ -474,7 +527,9 @@ function buildSong(raw, extra) {
   if (!notes.length) { lo = 60; hi = 72; }
   const maxDur = notes.reduce((m, n) => Math.max(m, n.end - n.start), 0);
   const tempoMarks = tempos.map((t) => { let mi = 0; while (mi + 1 < measures.length && measures[mi + 1].startQ <= t.q + 1e-6) mi++; return { q: t.q, bpm: t.bpm, measure: mi }; });
-  return { title: raw.title, composer: raw.composer || "", notes, measures, beats, steps, duration, lo, hi, maxDur, secAt, qAt, bpmAt, baseBpm: tempos[0].bpm, tempoMarks, ...extra };
+  // 연주 위치(펼친 시간) → 원본 악보 위치(악보 커서용)
+  const toSrcQ = (q) => { let lo2 = 0, hi2 = measures.length - 1; while (lo2 < hi2) { const m2 = (lo2 + hi2 + 1) >> 1; if (measures[m2].startQ <= q + 1e-9) lo2 = m2; else hi2 = m2 - 1; } const m = measures[lo2]; return m ? srcMeasures[m.src].startQ + (q - m.startQ) : q; };
+  return { title: raw.title, composer: raw.composer || "", notes, measures, srcMeasures, srcCount: srcMeasures.length, expanded: !!raw.expanded, jumps: !!raw.jumps, toSrcQ, beats, steps, duration, lo, hi, maxDur, secAt, qAt, bpmAt, baseBpm: tempos[0].bpm, tempoMarks, ...extra };
 }
 
 /* ============================================================
@@ -624,9 +679,11 @@ const sounding = new Map();  // midi -> hand (재생 중인 음, 화면 표시�
 function practiceHas(hand) { return settings.hands === "both" || settings.hands === hand; }
 function loopRange() {
   if (!song || !settings.loopOn || !song.measures.length) return null;
-  const n = song.measures.length;
-  const a = clamp(settings.loopA, 1, n) - 1, b = clamp(Math.max(settings.loopB, settings.loopA), 1, n) - 1;
-  return { a, b, start: song.measures[a].start, end: song.measures[b].end };
+  // loopA/B는 원본 마디 번호. 연주 순서에서 A의 첫 연주부터 그 뒤 처음 나오는 B까지.
+  const n = srcCount();
+  const sa = clamp(settings.loopA, 1, n) - 1, sb = clamp(Math.max(settings.loopB, settings.loopA), 1, n) - 1;
+  const a = perfOfSrc(sa); let b = a; for (let i = a; i < song.measures.length; i++) { b = i; if (song.measures[i].src === sb) break; }
+  return { a, b, sa, sb, start: song.measures[a].start, end: song.measures[b].end };
 }
 function measureAt(sec) {
   if (!song || !song.measures.length) return 0;
@@ -634,6 +691,13 @@ function measureAt(sec) {
   while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (song.measures[mid].start <= sec + 1e-6) lo = mid; else hi = mid - 1; }
   return lo;
 }
+// 화면에 보이는 마디 번호는 원본 악보 기준(순번+1). 엔진은 펼친(연주 순서) 마디 순번을 쓴다.
+const srcOf = (pi) => (song && song.measures[pi] ? song.measures[pi].src : pi);
+const srcCount = () => (song ? song.srcCount || song.measures.length : 0);
+function perfOfSrc(si, from = 0) { if (!song) return 0; for (let i = Math.max(0, from); i < song.measures.length; i++) if (song.measures[i].src === si) return i; for (let i = 0; i < song.measures.length; i++) if (song.measures[i].src === si) return i; return clamp(si, 0, song.measures.length - 1); }
+function nearestPerfOfSrc(si) { if (!song) return 0; const cur = measureAt(E.pos); let best = -1; song.measures.forEach((m, i) => { if (m.src === si && (best < 0 || Math.abs(i - cur) < Math.abs(best - cur))) best = i; }); return best < 0 ? perfOfSrc(si) : best; }
+function srcMeasureAt(sec) { return srcOf(measureAt(sec)); }
+function measureLabel(pi) { const m = song && song.measures[pi]; if (!m) return String(pi + 1); return String(m.src + 1) + (song.expanded && m.pass > 1 ? `(${m.pass}회)` : ""); }
 function lowerBound(arr, sec, key = "start") { let lo = 0, hi = arr.length; while (lo < hi) { const m = (lo + hi) >> 1; if (arr[m][key] < sec - 1e-6) lo = m + 1; else hi = m; } return lo; }
 function requiredOf(step) { return step.notes.filter((n) => practiceHas(n.hand)); }
 
@@ -734,7 +798,7 @@ function advance(d) {
     if (lr) {
       onLoopDone(); seek(lr.start, true, "loop"); if (settings.countIn) startCountIn();
       // 구간 반복으로 되돌아간다는 걸 알려 준다 (켜 둔 걸 잊으면 "뒤로 가서 다시 친다"로 보일 수 있음)
-      if (!E.loopTold) { E.loopTold = true; toast(`구간 반복 중: ${lr.a + 1}~${lr.b + 1}마디를 다시 쳐요 (반복 버튼으로 끌 수 있어요)`); }
+      if (!E.loopTold) { E.loopTold = true; toast(`구간 반복 중: ${lr.sa + 1}~${lr.sb + 1}마디를 다시 쳐요 (반복 버튼으로 끌 수 있어요)`); }
     }
     else { E.playing = false; E.finished = true; Practice.flush(); setPlayIcon(); toast(settings.mode === "wait" ? `끝까지 쳤어요! 정확도 ${accText()}` : "곡이 끝났어요. ▶를 누르면 처음부터 다시 들어요."); }
   }
@@ -924,8 +988,9 @@ const Score = {
       const meas = it.CurrentMeasure;
       const ts = (it.CurrentSourceTimestamp || it.currentTimeStamp).RealValue;
       const ms = meas && meas.AbsoluteTimestamp ? meas.AbsoluteTimestamp.RealValue : ts;
-      if (song && song.measures[mi]) {
-        const qq = song.measures[mi].startQ + (ts - ms) * 4;
+      const sm = song && (song.srcMeasures || song.measures);
+      if (sm && sm[mi]) {
+        const qq = sm[mi].startQ + (ts - ms) * 4; // 원본 악보 시간
         if (!steps.length || qq > steps[steps.length - 1].q + 1e-6) steps.push({ q: qq, mi, k });
       }
       it.moveToNext(); k++;
@@ -934,7 +999,7 @@ const Score = {
   },
   sync(force) {
     if (!this.ready || !song || !this.steps.length) return;
-    const qNow = song.qAt(E.pos) + 1e-4;
+    const qNow = (song.toSrcQ ? song.toSrcQ(song.qAt(E.pos)) : song.qAt(E.pos)) + 1e-4; // 도돌이표로 펼친 연주 위치 → 원본 악보 위치
     let lo = 0, hi = this.steps.length - 1;
     if (this.steps[0].q > qNow) hi = 0;
     while (lo < hi) { const m = (lo + hi + 1) >> 1; if (this.steps[m].q <= qNow) lo = m; else hi = m - 1; }
@@ -942,7 +1007,13 @@ const Score = {
     if (target === this.idx && !force) return;
     try {
       const c = this.osmd.cursor;
-      if (target < this.idx && this.idx >= 0) PosLog.cursorBack(this.steps[this.idx], this.steps[target]);
+      if (target < this.idx && this.idx >= 0) {
+        // 도돌이표로 원본 앞부분을 다시 연주하는 건 정상 (연주 마디의 회차가 바뀜)
+        const pm = song.measures[measureAt(E.pos)];
+        if (pm && pm.pass > 1 && this.lastPass !== pm.pass) PosLog.add("repeat", song.secAt(this.steps[this.idx].q), song.secAt(this.steps[target].q));
+        else PosLog.cursorBack(this.steps[this.idx], this.steps[target]);
+      }
+      { const pm = song.measures[measureAt(E.pos)]; this.lastPass = pm ? pm.pass : 1; }
       const goal = this.steps[target].k;
       if (goal < this.k || this.idx < 0) { c.reset(); this.k = 0; }
       const it = c.Iterator || c.iterator; // reset()은 iterator를 새로 만들므로 reset 뒤에 가져온다
@@ -974,7 +1045,7 @@ const Score = {
     this.clearShades(); if (!this.ready) return;
     if (song && song.flagged) song.flagged.forEach((iss, i) => { const b = this.measureBox(i); if (!b) return; const d = document.createElement("div"); d.className = "flag-shade"; d.title = iss.join(" · "); Object.assign(d.style, { left: b.x - 2 + "px", top: b.y - 6 + "px", width: b.w + 4 + "px", height: b.h + 12 + "px" }); $("#osmd").appendChild(d); });
     const lr = loopRange(); if (!lr) return;
-    for (let i = lr.a; i <= lr.b; i++) { const b = this.measureBox(i); if (!b) continue; const d = document.createElement("div"); d.className = "loop-shade"; Object.assign(d.style, { left: b.x - 2 + "px", top: b.y - 6 + "px", width: b.w + 4 + "px", height: b.h + 12 + "px" }); $("#osmd").appendChild(d); }
+    for (const si of new Set(song.measures.slice(lr.a, lr.b + 1).map((m) => m.src))) { const b = this.measureBox(si); if (!b) continue; const d = document.createElement("div"); d.className = "loop-shade"; Object.assign(d.style, { left: b.x - 2 + "px", top: b.y - 6 + "px", width: b.w + 4 + "px", height: b.h + 12 + "px" }); $("#osmd").appendChild(d); }
   },
   measureFromPoint(x, y) {
     if (!this.ready || !song) return -1;
@@ -986,7 +1057,7 @@ const Score = {
 $("#osmd").addEventListener("click", (e) => {
   const host = $("#osmd").getBoundingClientRect();
   const mi = Score.measureFromPoint(e.clientX - host.left, e.clientY - host.top);
-  if (mi >= 0) { seek(song.measures[mi].start); toast(`${mi + 1}마디로 이동했어요`); }
+  if (mi >= 0) { seek(song.measures[nearestPerfOfSrc(mi)].start); toast(`${mi + 1}마디로 이동했어요`); }
 });
 let resizeT = 0;
 new ResizeObserver(() => { clearTimeout(resizeT); resizeT = setTimeout(() => { if (Score.ready) { Score.idx = -1; Score.sync(true); Score.drawShades(); } }, 400); }).observe($("#scoreScroll"));
@@ -1053,9 +1124,9 @@ function drawFall() {
   song.beats.forEach((b) => { if (b.sec < bottom || b.sec > top) return; const y = yOf(b.sec); fctx.fillStyle = b.down ? colors["--stage-line"] : "rgba(255,255,255,0.035)"; fctx.fillRect(0, y, W, b.down ? 1.5 : 1); });
   song.measures.forEach((m) => {
     if (m.end < bottom || m.start > top) return;
-    if (song.flagged && song.flagged.has(m.idx)) { const y1 = yOf(m.end), y2 = yOf(m.start); fctx.fillStyle = "rgba(240,170,40,0.10)"; fctx.fillRect(0, y1, W, y2 - y1); fctx.fillStyle = "rgba(240,170,40,0.9)"; fctx.fillRect(0, y1, 4, y2 - y1); }
+    if (song.flagged && song.flagged.has(m.src)) { const y1 = yOf(m.end), y2 = yOf(m.start); fctx.fillStyle = "rgba(240,170,40,0.10)"; fctx.fillRect(0, y1, W, y2 - y1); fctx.fillStyle = "rgba(240,170,40,0.9)"; fctx.fillRect(0, y1, 4, y2 - y1); }
     if (m.start < bottom) return;
-    const y = yOf(m.start); fctx.fillStyle = song.flagged && song.flagged.has(m.idx) ? "#f0aa28" : colors["--stage-text"]; fctx.fillText(String(m.idx + 1) + (song.flagged && song.flagged.has(m.idx) ? " ?" : ""), 8, y - 4);
+    const y = yOf(m.start); fctx.fillStyle = song.flagged && song.flagged.has(m.src) ? "#f0aa28" : colors["--stage-text"]; fctx.fillText(measureLabel(m.idx) + (song.flagged && song.flagged.has(m.src) ? " ?" : ""), 8, y - 4);
   });
   // 노트
   const from = lowerBound(song.notes, E.pos - 0.25 - song.maxDur);
@@ -1172,7 +1243,7 @@ function toast(msg) { const t = $("#toast"); t.textContent = msg; t.hidden = fal
 function setPlayIcon() { $("#playIcon").innerHTML = E.playing ? '<path d="M7 5h4v14H7zM13 5h4v14h-4z"/>' : '<path d="M8 5v14l11-7z"/>'; $("#playBtn").setAttribute("aria-label", E.playing ? "일시정지" : "재생"); }
 function updateReadouts() {
   if (!song) return; const mi = measureAt(E.pos);
-  $("#measureReadout").innerHTML = `마디 <b>${mi + 1}</b> / ${song.measures.length}`;
+  $("#measureReadout").innerHTML = `마디 <b>${measureLabel(mi)}</b> / ${srcCount()}`;
 }
 let lastPrompt = "";
 function updatePrompt() {
@@ -1199,7 +1270,7 @@ function setMode(m) {
 function setHands(h) { settings.hands = h; $$("[data-hands]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.hands === h))); if (song) { E.waitIdx = lowerBound(song.steps, E.pos); E.hits.clear(); E.waiting = false; } saveSettings(); }
 function setLoop(on) {
   settings.loopOn = on; $("#loopOn").checked = on; $("#loopBtn").setAttribute("aria-pressed", String(on));
-  if (song) { const n = song.measures.length; settings.loopA = clamp(parseInt($("#loopA").value) || 1, 1, n); settings.loopB = clamp(Math.max(parseInt($("#loopB").value) || 1, settings.loopA), 1, n); $("#loopA").value = settings.loopA; $("#loopB").value = settings.loopB; }
+  if (song) { const n = srcCount(); settings.loopA = clamp(parseInt($("#loopA").value) || 1, 1, n); settings.loopB = clamp(Math.max(parseInt($("#loopB").value) || 1, settings.loopA), 1, n); $("#loopA").value = settings.loopA; $("#loopB").value = settings.loopB; }
   saveSettings(); Score.drawShades();
   const lr = loopRange(); if (lr && (E.pos < lr.start || E.pos >= lr.end)) seek(lr.start, false, "loop");
 }
@@ -1216,19 +1287,19 @@ $("#speed").oninput = (e) => setRate(parseInt(e.target.value) / 100);
 $$("[data-mode]").forEach((b) => b.onclick = () => setMode(b.dataset.mode));
 $$("[data-hands]").forEach((b) => b.onclick = () => setHands(b.dataset.hands));
 $("#loopBtn").onclick = () => {
-  if (!settings.loopOn && song) { const mi = measureAt(E.pos) + 1; if (mi < settings.loopA || mi > settings.loopB) { $("#loopA").value = mi; $("#loopB").value = Math.min(song.measures.length, mi + 1); } }
+  if (!settings.loopOn && song) { const mi = srcMeasureAt(E.pos) + 1; if (mi < settings.loopA || mi > settings.loopB) { $("#loopA").value = mi; $("#loopB").value = Math.min(srcCount(), mi + 1); } }
   setLoop(!settings.loopOn);
   toast(settings.loopOn ? `${settings.loopA}~${settings.loopB}마디 반복 (설정에서 바꿀 수 있어요)` : "구간 반복을 껐어요");
 };
 $("#loopOn").onchange = (e) => setLoop(e.target.checked);
 $("#loopA").onchange = () => setLoop(settings.loopOn);
 $("#loopB").onchange = () => setLoop(settings.loopOn);
-$("#loopHere").onclick = () => { if (!song) return; const mi = measureAt(E.pos) + 1; setLoopRange(mi, mi); };
-$("#loopHere2").onclick = () => { if (!song) return; const mi = measureAt(E.pos) + 1; setLoopRange(mi, Math.min(song.measures.length, mi + 1)); };
-$("#loopAll").onclick = () => { if (!song) return; setLoopRange(1, song.measures.length); };
+$("#loopHere").onclick = () => { if (!song) return; const mi = srcMeasureAt(E.pos) + 1; setLoopRange(mi, mi); };
+$("#loopHere2").onclick = () => { if (!song) return; const mi = srcMeasureAt(E.pos) + 1; setLoopRange(mi, Math.min(srcCount(), mi + 1)); };
+$("#loopAll").onclick = () => { if (!song) return; setLoopRange(1, srcCount()); };
 $("#metroBtn").onclick = () => { settings.metro = !settings.metro; $("#metroBtn").setAttribute("aria-pressed", String(settings.metro)); saveSettings(); };
 const bindSwitch = (id, key, after) => { const el = $("#" + id); el.checked = !!settings[key]; el.onchange = () => { settings[key] = el.checked; saveSettings(); after && after(); }; };
-bindSwitch("autoSpeed", "autoSpeed"); bindSwitch("steadyTempo", "steadyTempo", () => rebuildTiming()); bindSwitch("accomp", "accomp"); bindSwitch("guide", "guide"); bindSwitch("countIn", "countIn"); bindSwitch("inputSound", "inputSound"); bindSwitch("fingers", "fingers");
+bindSwitch("autoSpeed", "autoSpeed"); bindSwitch("steadyTempo", "steadyTempo", () => rebuildTiming()); bindSwitch("expandRepeats", "expandRepeats", () => { rebuildTiming(); renderFlags(); toast(settings.expandRepeats ? "도돌이표대로 반복해서 연주해요" : "도돌이표를 무시하고 처음부터 끝까지 한 번만 연주해요"); }); bindSwitch("accomp", "accomp"); bindSwitch("guide", "guide"); bindSwitch("countIn", "countIn"); bindSwitch("inputSound", "inputSound"); bindSwitch("fingers", "fingers");
 $("#volume").value = Math.round(settings.volume * 100); $("#volume").oninput = (e) => { settings.volume = e.target.value / 100; Sound.setVolume(settings.volume); saveSettings(); };
 $("#viewSel").value = settings.view; $("#viewSel").onchange = (e) => { settings.view = e.target.value; applyView(); saveSettings(); };
 $("#labelSel").value = settings.labels; $("#labelSel").onchange = (e) => { settings.labels = e.target.value; saveSettings(); };
@@ -1277,7 +1348,7 @@ function renderFlags() {
     list.forEach(([mi, tip]) => { const b = document.createElement("button"); b.type = "button"; b.className = "flag-chip " + cls; b.textContent = String(mi + 1); b.title = tip; b.onclick = () => onclick(mi, tip); wrap.appendChild(b); });
     box.appendChild(wrap);
   };
-  const go = (mi, tip) => { setLoopRange(mi + 1, mi + 1); seek(song.measures[mi].start); toast(`${mi + 1}마디: ${tip}`); };
+  const go = (mi, tip) => { setLoopRange(mi + 1, mi + 1); seek(song.measures[perfOfSrc(mi)].start); toast(`${mi + 1}마디: ${tip}`); };
   if (hasFlags) chips("확인이 필요한 마디:", [...song.flagged.keys()].sort((a, b) => a - b).map((mi) => [mi, song.flagged.get(mi).join(" · ")]), "", go);
   if (fixed.length) chips("대조하며 고친 마디:", fixed.filter((f) => song && f.m < song.measures.length).map((f) => [f.m, f.note]), "fixed", go);
 }
@@ -1287,8 +1358,9 @@ function setSong(raw, meta) {
   if (meta.persist !== false && settings.loopOn && !meta.keepLoop) { settings.loopOn = false; $("#loopOn").checked = false; $("#loopBtn").setAttribute("aria-pressed", "false"); saveSettings(); }
   song = buildSong(raw, {});
   current = { xml: meta.xml || null, kind: meta.kind, origImages: meta.origImages || [], name: meta.name || "", flags: meta.flags || [], report: meta.report || null, fixed: meta.fixed || [], raw, meta, ai: meta.ai || null, cloudId: meta.cloudId || (meta.sameSong ? prevCloudId : null) || null };
-  song.flagged = new Map(); current.flags.forEach((f) => { if (f.m < song.measures.length) song.flagged.set(f.m, (song.flagged.get(f.m) || []).concat(f.issues)); });
+  song.flagged = new Map(); current.flags.forEach((f) => { if (f.m < srcCount()) song.flagged.set(f.m, (song.flagged.get(f.m) || []).concat(f.issues)); });
   renderFlags(); renderTempos();
+  if (song.jumps) setTimeout(() => toast("이 악보에는 D.C.·D.S.·Coda 같은 이동 표시가 있어요. 아직 그 이동은 하지 않고 순서대로 연주해요."), 1200);
   $("#songTitle").textContent = song.title || meta.name || "제목 없는 악보";
   const kindBadge = { musicxml: "MusicXML", midi: "MIDI", demo: "예제 곡", ai: "AI 초안", omr: "자동 변환" }[meta.kind] || meta.kind;
   $("#songMeta").innerHTML = `<span class="badge${meta.kind === "ai" ? " ai" : ""}">${kindBadge}</span>${song.composer ? `<span>${esc(song.composer)}</span>` : ""}<span>${song.measures.length}마디 · ♩=${Math.round(song.baseBpm)}</span><span>오른손 ${song.notes.filter((n) => n.hand === "R").length} · 왼손 ${song.notes.filter((n) => n.hand === "L").length}음</span>`;
@@ -1298,7 +1370,7 @@ function setSong(raw, meta) {
   const ov = $("#origView"); ov.hidden = true; ov.innerHTML = ""; $("#origBtn").textContent = "원본 보기";
   current.origImages.forEach((u) => { const im = document.createElement("img"); im.src = u; im.alt = "원본 악보"; ov.appendChild(im); });
   $("#saveXmlBtn").hidden = !current.xml;
-  const n = song.measures.length; $("#loopA").max = n; $("#loopB").max = n;
+  const n = srcCount(); $("#loopA").max = n; $("#loopB").max = n;
   if (settings.loopA > n) settings.loopA = 1; if (settings.loopB > n) settings.loopB = Math.min(n, 4);
   $("#loopA").value = settings.loopA; $("#loopB").value = settings.loopB;
   E.mistakes = 0; E.correct = 0; E.loops = 0; E.passMistakes = 0; updateStats();
@@ -1315,9 +1387,9 @@ function renderTempos() {
   if (!current.raw.tempos || !current.raw.tempos.length) current.raw.tempos = [{ q: 0, bpm: song.baseBpm }];
   const list = current.raw.tempos.slice().sort((a, b) => a.q - b.q);
   list.forEach((t) => {
-    let mi = 0; while (mi + 1 < song.measures.length && song.measures[mi + 1].startQ <= t.q + 1e-6) mi++;
+    const sm = song.srcMeasures; let mi = 0; while (mi + 1 < sm.length && sm[mi + 1].startQ <= t.q + 1e-6) mi++; // 빠르기표는 원본 악보 위치
     const row = document.createElement("div"); row.className = "row";
-    const lab = document.createElement("button"); lab.type = "button"; lab.className = "btn small"; lab.textContent = `${mi + 1}마디`; lab.title = "이 마디로 이동"; lab.onclick = () => seek(song.measures[mi].start);
+    const lab = document.createElement("button"); lab.type = "button"; lab.className = "btn small"; lab.textContent = `${mi + 1}마디`; lab.title = "이 마디로 이동"; lab.onclick = () => seek(song.measures[perfOfSrc(mi)].start);
     const inp = document.createElement("input"); inp.type = "number"; inp.className = "num"; inp.min = 20; inp.max = 300; inp.value = Math.round(t.bpm); inp.setAttribute("aria-label", `${mi + 1}마디 빠르기`);
     inp.onchange = () => { const v = clamp(parseFloat(inp.value) || t.bpm, 20, 300); t.bpm = v; inp.value = Math.round(v); rebuildTiming(); toast(`${mi + 1}마디부터 ♩=${Math.round(v)}`); };
     const w = document.createElement("span"); w.append("♩ = ", inp); row.append(lab, w); box.appendChild(row);
@@ -1325,9 +1397,10 @@ function renderTempos() {
 }
 function rebuildTiming() {
   if (!song || !current.raw) return;
-  const mi = measureAt(E.pos); const flagged = song.flagged; const wasPlaying = E.playing; pause();
+  const pi = measureAt(E.pos), si = srcOf(pi), pass = song.measures[pi] ? song.measures[pi].pass : 1; const flagged = song.flagged; const wasPlaying = E.playing; pause();
   song = buildSong(current.raw, {}); song.flagged = flagged;
-  setRate(settings.rate); seek(song.measures[mi] ? song.measures[mi].start : 0, false, "song");
+  let ni = perfOfSrc(si); for (let i = ni; i < song.measures.length; i++) if (song.measures[i].src === si && song.measures[i].pass === pass) { ni = i; break; }
+  setRate(settings.rate); seek(song.measures[ni] ? song.measures[ni].start : 0, false, "song"); Score.idx = -1; Score.sync(true); Score.drawShades();
   try { const last = JSON.parse(localStorage.getItem(STORE_KEY + ":last") || "null"); if (last) { last.tempos = current.raw.tempos; localStorage.setItem(STORE_KEY + ":last", JSON.stringify(last)); } } catch (e) {}
   Library.autoSave(null, true);
   if (wasPlaying) play();
@@ -1563,7 +1636,7 @@ function renderJobs(js) {
 // 연습 한 번(재생 시작~멈춤)을 기록한다
 const Practice = {
   snap: null,
-  start() { this.snap = { t: performance.now(), c: E.correct, m: E.mistakes, l: E.loops, from: song ? measureAt(E.pos) + 1 : 1 }; },
+  start() { this.snap = { t: performance.now(), c: E.correct, m: E.mistakes, l: E.loops, from: song ? srcMeasureAt(E.pos) + 1 : 1 }; },
   flush() {
     const s = this.snap; this.snap = null; if (!s || !song) return;
     const sec = (performance.now() - s.t) / 1000; const c = E.correct - s.c, m = E.mistakes - s.m;
@@ -2142,7 +2215,7 @@ async function recheckMeasure(mi, filePromise) {
   } finally { recheckBusy = false; btn.disabled = false; btn.textContent = "지금 마디 다시 확인"; }
 }
 $("#recheckBtn") && ($("#recheckBtn").onclick = () => {
-  if (!song) return; const mi = measureAt(E.pos);
+  if (!song) return; const mi = srcMeasureAt(E.pos);
   const needFile = current.ai && !current.ai.systems && !(current.cloudId && current.hasCloudOriginal && Library.user);
   if (needFile) toast("원본 악보 파일(PDF·사진)을 다시 골라 주세요. 줄 이미지를 다시 만들어요.");
   const fp = needFile ? pickFile(".pdf,image/*") : null; // 파일 고르기 창은 클릭 순간에 열어야 함
@@ -2167,12 +2240,13 @@ function boot() {
   } catch (e) {}
   if (!restored) loadDemo();
   // 지난번에 켜 둔 구간 반복이 그대로 살아 있으면 알려 준다 (모르면 "자꾸 뒤로 돌아간다"로 느껴짐)
-  if (restored && settings.loopOn && song) { const lr = loopRange(); if (lr) setTimeout(() => toast(`지난번 구간 반복이 켜져 있어요: ${lr.a + 1}~${lr.b + 1}마디 (반복 버튼으로 끌 수 있어요)`), 600); }
+  if (restored && settings.loopOn && song) { const lr = loopRange(); if (lr) setTimeout(() => toast(`지난번 구간 반복이 켜져 있어요: ${lr.sa + 1}~${lr.sb + 1}마디 (반복 버튼으로 끌 수 있어요)`), 600); }
   try { const last = JSON.parse(localStorage.getItem(STORE_KEY + ":last") || "null"); if (restored && last && last.cloudId && current) current.cloudId = last.cloudId; } catch (e) {}
   Library.init();
   wakeOmrServer(); // 잠든 변환 서버를 미리 깨워 둔다
   if (matchMedia("(pointer: coarse)").matches) $("#hintKeys").hidden = true;
   requestAnimationFrame(frame);
 }
-window.GunbanNavi = { parseMusicXML, parseMIDI, jsonToMusicXML, buildSong, mxlToXml, get song() { return song; }, E, settings, ODE, seek, play, pause, userNoteOn, setMode, setHands, setLoopRange, setRate, Score, PosLog };
+window.GunbanNavi = { parseMusicXML, parseMIDI, jsonToMusicXML, buildSong, mxlToXml, get song() { return song; }, E, settings, ODE, seek, play, pause, userNoteOn, setMode, setHands, setLoopRange, setRate, Score, PosLog, loopRange, repeatOrder };
+window.loopRangeForTest = () => loopRange();
 boot();

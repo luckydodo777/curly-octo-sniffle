@@ -340,6 +340,52 @@ async function openPage(browser, opts = {}) {
     ok('연습 중 변환 완료: 곡을 바꾸지 않고 열기 버튼', r.during.title === '빠른곡' && r.during.openBtn && r.after === '변환곡', JSON.stringify(r));
     ok('페이지 오류 없음', errs.length === 0, errs.join(' | ')); await p.close(); }
 
+  // 12-2) 도돌이표·1/2번 괄호 펼치기
+  { const { p, errs } = await openPage(browser);
+    const r = await p.evaluate(() => {
+      const M = (rep) => ({ lenQ: 4, rep });
+      const ord = (ms) => repeatOrder(ms).map((o) => o.src + (o.pass > 1 ? "'" : "")).join(' ');
+      const E1 = { endStart: [1], endStop: true, ending: [1] }, E2 = { endStart: [2], endStop: true, ending: [2] };
+      const out = {
+        simple: ord([M({ fwd: true }), M({ bwd: 2 }), M()]),
+        noFwd: ord([M(), M({ bwd: 2 }), M()]),
+        endings: ord([M({ fwd: true }), M(), M({ ...E1, bwd: 2 }), M(E2), M()]),
+        three: ord([M({ fwd: true }), M({ endStart: [1, 2], endStop: true, ending: [1, 2], bwd: 3 }), M({ endStart: [3], endStop: true, ending: [3] }), M()]),
+        two: ord([M(), M({ bwd: 2 }), M({ fwd: true }), M({ bwd: 2 }), M()]),
+        longEnding: ord([M({ fwd: true }), M({ endStart: [1], ending: [1] }), M({ endStop: true, bwd: 2 }), M({ endStart: [2] }), M({ endStop: true }), M()]),
+      };
+      // 실제 MusicXML: 2마디 |: 3 4 :| [1 5 ] [2 6] 7 , 빠르기 2마디에서 변경, 4마디 확인 필요
+      const N = (st) => `<note><pitch><step>${st}</step><octave>4</octave></pitch><duration>4</duration><voice>1</voice><type>whole</type></note>`;
+      const bl = (loc, inner) => `<barline location="${loc}">${inner}</barline>`;
+      const xml = `<score-partwise><part-list><score-part id="P1"/></part-list><part id="P1">
+        <measure number="1"><attributes><divisions>1</divisions><time><beats>4</beats><beat-type>4</beat-type></time></attributes><direction><sound tempo="60"/></direction>${N('C')}</measure>
+        <measure number="2">${bl('left', '<repeat direction="forward"/>')}<direction><sound tempo="120"/></direction>${N('D')}</measure>
+        <measure number="3">${N('E')}</measure>
+        <measure number="4">${bl('left', '<ending number="1" type="start"/>')}${N('F')}${bl('right', '<ending number="1" type="stop"/><repeat direction="backward"/>')}</measure>
+        <measure number="5">${bl('left', '<ending number="2" type="start"/>')}${N('G')}${bl('right', '<ending number="2" type="discontinue"/>')}</measure>
+        <measure number="6">${N('A')}</measure></part></score-partwise>`;
+      const G = GunbanNavi; const raw = parseMusicXML(xml); setSong(raw, { kind: 'musicxml', xml, name: 'r', flags: [{ m: 3, issues: ['확인'] }], persist: false });
+      const s = G.song;
+      out.perf = s.measures.map((m) => m.src + 1 + (m.pass > 1 ? "'" : "")).join(' ');
+      out.notes = s.notes.map((n) => n.midi).join(',');
+      out.occ = s.notes.filter((n) => n.midi === 62).map((n) => n.occ).join(',');
+      out.tempos = s.tempoMarks.map((t) => `${t.measure + 1}:${t.bpm}`).join(' ');
+      out.secs = Math.round(s.duration);
+      out.srcQ = [s.toSrcQ(s.measures[4].startQ), s.toSrcQ(s.measures[4].startQ + 1)]; // 2회째 2마디 → 원본 2마디(4박)
+      G.setLoopRange(3, 4); const lr = loopRangeForTest();
+      out.loop = [lr.a, lr.b, lr.sa, lr.sb];
+      G.seek(s.measures[5].start + 0.1); out.label = document.querySelector('#measureReadout').textContent; 
+      document.querySelector('#loopOn').checked && document.querySelector('#loopOn').click();
+      document.querySelector('#expandRepeats').click(); out.off = G.song.measures.length; out.offLabel = document.querySelector('#measureReadout').textContent;
+      document.querySelector('#expandRepeats').click(); out.on = G.song.measures.length;
+      return out;
+    });
+    ok('도돌이표 순서: 기본·여는 표 없음·1/2번 괄호·3회·두 구간·여러 마디 괄호', r.simple === "0 1 0' 1' 2" && r.noFwd === "0 1 0' 1' 2" && r.endings === "0 1 2 0' 1' 3' 4" && r.three === "0 1 0' 1' 0' 2' 3" && r.two === "0 1 0' 1' 2 3 2' 3' 4" && r.longEnding === "0 1 2 0' 3' 4' 5", JSON.stringify(r));
+    ok('MusicXML 도돌이표 펼침: 마디·음·빠르기가 연주 순서대로', r.perf === "1 2 3 4 2' 3' 5' 6" && r.notes === '60,62,64,65,62,64,67,69' && r.occ === '2#1,2#2' && r.tempos === '1:60 2:120 5:120' && r.srcQ[0] === 4 && r.srcQ[1] === 5, JSON.stringify(r));
+    ok('마디 번호는 원본 악보 기준 (구간 반복·표시)', JSON.stringify(r.loop) === '[2,3,2,3]' && /마디 3\(2회\) \/ 6/.test(r.label), JSON.stringify([r.loop, r.label]));
+    ok('도돌이표 반복 끄기/켜기', r.off === 6 && r.on === 8 && /마디 3 \/ 6/.test(r.offLabel), JSON.stringify([r.off, r.on, r.offLabel]));
+    ok('페이지 오류 없음', errs.length === 0, errs.join(' | ')); await p.close(); }
+
   // 13) 악보 커서 ↔ 연주 위치 (OSMD 1.8.9 필요): 못갖춘마디·박자 넘침 마디·도돌이표가 있어도 커서가 연주 위치 마디에 있고 뒤로 가지 않음
   if (fs.existsSync(OSMD_LOCAL)) {
     const { p, errs } = await openPage(browser, { osmd: true });
@@ -360,11 +406,12 @@ async function openPage(browser, opts = {}) {
       for (const st of G.song.steps) {
         G.E.pos = st.start + 1e-4; Score.sync(false);
         const it = Score.osmd.cursor.Iterator || Score.osmd.cursor.iterator;
-        if (it.CurrentMeasureIndex !== st.measure) bad.push([st.measure, it.CurrentMeasureIndex]);
+        const srcM = G.song.measures[st.measure].src; // 도돌이표로 펼친 연주 마디 → 원본 마디
+        if (it.CurrentMeasureIndex !== srcM) bad.push([st.measure, srcM, it.CurrentMeasureIndex]);
       }
-      return { ready: true, steps: G.song.steps.length, cursorSteps: Score.steps.length, lastK: Score.steps[Score.steps.length - 1].k, bad, unexpected: G.PosLog.unexpected().length, flags: raw.fitFlags.map((f) => f.m) };
+      return { ready: true, repeats: G.PosLog.list.filter((e) => e.reason === 'repeat').length, steps: G.song.steps.length, cursorSteps: Score.steps.length, lastK: Score.steps[Score.steps.length - 1].k, bad, unexpected: G.PosLog.unexpected().length, flags: raw.fitFlags.map((f) => f.m) };
     });
-    ok('악보 커서가 연주 위치 마디와 일치 (못갖춘마디·박자 넘침·도돌이표·꾸밈음)', r.ready && r.bad.length === 0 && r.unexpected === 0 && r.steps > 10, JSON.stringify(r));
+    ok('악보 커서가 연주 위치 마디와 일치 (못갖춘마디·박자 넘침·도돌이표 펼침·꾸밈음)', r.ready && r.bad.length === 0 && r.unexpected === 0 && r.steps === 21 && r.cursorSteps === 14 && r.repeats === 1, JSON.stringify(r));
     ok('페이지 오류 없음 (악보 그림)', errs.length === 0, errs.join(' | ')); await p.close();
   } else console.log('SKIP  악보 커서 시험 (tests/.cache/osmd-1.8.9.min.js 없음)');
 
