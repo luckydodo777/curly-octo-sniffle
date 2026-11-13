@@ -605,6 +605,40 @@ async function openPage(browser, opts = {}) {
     ok('태블릿 가로(1180×820): 피아노가 화면 절반 이상, 설정은 서랍, 악보 한 줄', r.pianoShare >= 0.5 && r.sideFixed === 'fixed' && r.line, JSON.stringify([r.pianoShare, r.sideFixed, r.line]));
     ok('페이지 오류 없음', errs.length === 0, errs.join(' | ')); await p.close(); }
 
+  // 19) 기본 화면: 내려오는 음표 없이 "지금 칠 건반"만 알려 줌. 내려오는 음표는 설정에서 켜는 추가 기능
+  { const { p, errs } = await openPage(browser, { viewport: { width: 1180, height: 820 } });
+    const r = await p.evaluate(async () => {
+      const G = GunbanNavi; const out = {}; const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      const h = (s2) => Math.round(document.querySelector(s2).getBoundingClientRect().height);
+      const app = document.querySelector('#app');
+      out.def = [G.settings.fallNotes, app.classList.contains('keys-first'), document.querySelector('#fallNotes').checked, document.querySelector('#zoomRow').hidden];
+      out.sizes = { lane: h('#fall'), keys: h('#keys'), score: h('#scorePane') };
+      // 따라치기(멈춤): 칠 음 = 첫 단계의 음
+      G.pause(); G.setMode('wait'); G.setHands('both'); G.seek(0, false, 'test');
+      const first = G.song.steps[0].notes.map((n) => n.midi).sort(); out.wait = JSON.stringify([...G.guideTargets().up.keys()].sort()) === JSON.stringify(first);
+      // 듣기(재생 중): 미리 보여 주지 않음 — 지금 울리는 음만
+      G.settings.countIn = false; G.setMode('listen'); G.seek(0, false, 'test'); G.play(); await sleep(250);
+      const t = G.guideTargets(); out.listen = [t.up.size, t.act.size > 0]; G.pause();
+      return out;
+    });
+    // 끌어서 위치 옮기기는 내려오는 음표를 켰을 때만 (실제 마우스로)
+    const dragFall = async () => { const bx = await p.locator('#fall').boundingBox(); await p.mouse.move(bx.x + 60, bx.y + 20); await p.mouse.down(); await p.mouse.move(bx.x + 60, bx.y + 70, { steps: 4 }); await p.mouse.up(); return p.evaluate(() => GunbanNavi.E.pos); };
+    const pos0 = await p.evaluate(() => GunbanNavi.E.pos); r.dragOff = Math.abs((await dragFall()) - pos0) < 1e-6;
+    Object.assign(r, await p.evaluate(async (lane) => {
+      const G = GunbanNavi; const out = {}; const sleep = (ms) => new Promise((r) => setTimeout(r, ms)); const app = document.querySelector('#app');
+      // 설정에서 켜면 예전처럼 음표가 내려오고, 듣기에서도 곧 칠 음을 미리 표시
+      document.querySelector('#fallNotes').click(); await sleep(150);
+      out.on = [G.settings.fallNotes, app.classList.contains('keys-first'), document.querySelector('#zoomRow').hidden, document.querySelector('#fall').getBoundingClientRect().height > lane + 40];
+      G.seek(Math.max(0, G.song.steps[1].start - 0.5), false, 'test'); out.listenAhead = G.guideTargets().up.size > 0; out.pos1 = G.E.pos;
+      return out;
+    }, r.sizes.lane));
+    r.dragOn = Math.abs((await dragFall()) - r.pos1) > 1e-3;
+    r.back = await p.evaluate(async () => { document.querySelector('#fallNotes').click(); await new Promise((r) => setTimeout(r, 100)); return document.querySelector('#app').classList.contains('keys-first'); });
+    ok('기본 화면: 내려오는 음표 꺼짐 · 건반 크게(안내 줄 + 건반) · 음표 간격 설정 숨김', r.def[0] === false && r.def[1] && !r.def[2] && r.def[3] && r.sizes.keys >= 280 && r.sizes.lane >= 90 && r.sizes.lane <= 180 && r.sizes.score >= 150, JSON.stringify([r.def, r.sizes]));
+    ok('지금 칠 건반만: 따라치기는 기다리는 음, 듣기는 미리 보여 주지 않고 울리는 음만', r.wait && r.listen[0] === 0 && r.listen[1], JSON.stringify([r.wait, r.listen]));
+    ok('내려오는 음표는 추가 기능: 켜면 음표 영역이 커지고 미리 표시·끌어서 이동, 끄면 기본 화면', r.on[0] && !r.on[1] && !r.on[2] && r.on[3] && r.listenAhead && r.dragOff && r.dragOn && r.back, JSON.stringify([r.on, r.listenAhead, r.dragOff, r.dragOn, r.back]));
+    ok('페이지 오류 없음', errs.length === 0, errs.join(' | ')); await p.close(); }
+
   // 13) 악보 커서 ↔ 연주 위치 (OSMD 1.8.9 필요): 못갖춘마디·박자 넘침 마디·도돌이표가 있어도 커서가 연주 위치 마디에 있고 뒤로 가지 않음
   if (fs.existsSync(OSMD_LOCAL)) {
     const { p, errs } = await openPage(browser, { osmd: true });

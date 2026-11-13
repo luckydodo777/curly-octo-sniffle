@@ -89,8 +89,25 @@ button{touch-action:manipulation}
 #fall{flex:1;min-height:0;width:100%;display:block;touch-action:none;cursor:ns-resize}
 #keys{flex:0 0 auto;width:100%;height:var(--keys-h);display:block;touch-action:none;cursor:pointer}
 .app.view-keys .score-pane{display:none}
-.app.view-score #fall{display:none}
-.app.view-score .stage{flex:0 0 auto;min-height:0}
+/* 기본 화면: 내려오는 음표 없이 "지금 칠 건반"만. 건반을 크게(실제 건반 비율까지), 그 위에 얇은 안내 줄, 남는 자리는 악보 */
+.app.keys-first{--lane-h:clamp(96px,20vh,176px); --keys-h:clamp(120px,min(39vh,calc(var(--kw,60px) * 6)),440px)}
+.app.keys-first .stage{flex:0 0 auto;min-height:0}
+.app.keys-first #fall{flex:0 0 var(--lane-h);cursor:default;touch-action:auto}
+.app.keys-first .score-pane,.app.keys-first.score-line .score-pane{flex:1 1 0;min-height:90px}
+.app.keys-first.view-keys .stage{flex:1 1 auto}
+.app.keys-first.view-keys #fall{flex:1 1 0}
+.app.keys-first .prompt{bottom:auto;top:7px;font-size:14px;padding:6px 16px}
+.app.keys-first .countdown{font-size:min(88px,calc(var(--lane-h) * .62))}
+.row[hidden]{display:none}
+/* 기본 화면에서는 마이크 안내가 건반을 가리지 않게 안내 줄 위쪽의 한 줄 띠로 */
+.app.keys-first .input-hint{top:6px;transform:translateX(-50%);width:auto;max-width:calc(100% - 16px);flex-direction:row;align-items:center;gap:10px;padding:5px 6px 5px 16px;border-radius:999px;white-space:nowrap;box-shadow:0 8px 24px rgba(0,0,0,.4)}
+.app.keys-first .input-hint p{display:none}
+.app.keys-first .input-hint b{font-size:13.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis}
+.app.keys-first .input-hint .acts{flex-wrap:nowrap;gap:6px}
+.app.keys-first .input-hint .btn{height:32px;padding:0 12px;font-size:13px;border-radius:999px}
+.app.keys-first .input-hint:not([hidden]) ~ .prompt{display:none}
+@media (max-width:700px){ .app.keys-first .input-hint b{display:none} .app.keys-first .input-hint{padding:5px 6px} }
+@media (max-height:560px){ .app.keys-first .input-hint{display:none} }
 .prompt{position:absolute;left:50%;transform:translateX(-50%);bottom:calc(var(--keys-h) + 16px);background:rgba(16,17,20,.9);color:var(--lacquer-ink);border:1px solid var(--lacquer-line);border-radius:999px;padding:8px 18px;font-size:15px;white-space:nowrap;max-width:94%;overflow:hidden;text-overflow:ellipsis;pointer-events:none;box-shadow:0 8px 24px rgba(0,0,0,.4)}
 .prompt .r{color:var(--rh);font-weight:600}.prompt .l{color:var(--lh);font-weight:600}
 .countdown{position:absolute;inset:0;bottom:var(--keys-h);display:grid;place-items:center;font-family:var(--f-display);font-weight:700;font-size:88px;color:var(--brass-hi);pointer-events:none;text-shadow:0 4px 30px rgba(0,0,0,.6)}
@@ -229,6 +246,8 @@ ol.steps b{color:var(--ink)}
 }
 @media (max-width:560px){
   :root{--keys-h:clamp(96px,17vh,150px)}
+  .app.keys-first{--lane-h:clamp(72px,12vh,110px)}
+  .app.keys-first .prompt{display:none}
   .speed .readout:first-child{display:none}
   .brand{font-size:0;gap:0}
   .top-actions .btn span{display:none}
@@ -241,6 +260,9 @@ ol.steps b{color:var(--ink)}
 /* 짧은 가로 화면(휴대폰 가로): 악보를 줄이고 피아노에 자리를 */
 @media (max-height:560px){
   :root{--keys-h:clamp(70px,20vh,120px); --bar-h:50px}
+  .app.keys-first{--lane-h:44px; --keys-h:clamp(84px,min(31vh,calc(var(--kw,40px) * 6)),130px)}
+  .app.keys-first .prompt{display:none}
+  .app.keys-first .score-pane,.app.keys-first.score-line .score-pane{min-height:60px}
   .app{row-gap:6px;padding-top:max(6px,env(safe-area-inset-top,0px));padding-bottom:max(6px,env(safe-area-inset-bottom,0px))}
   .top{flex-wrap:nowrap;min-height:38px}
   .song{order:0;flex-basis:auto}
