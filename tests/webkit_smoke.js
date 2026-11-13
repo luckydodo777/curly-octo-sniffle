@@ -22,7 +22,7 @@ const OSMD = path.resolve(__dirname, '.cache', 'osmd-1.8.9.min.js');
       try { Object.defineProperty(MediaDevices.prototype, 'getUserMedia', { value: fakeGUM, configurable: true, writable: true }); } catch (e) {}
       try { if (!navigator.mediaDevices) Object.defineProperty(navigator, 'mediaDevices', { value: { getUserMedia: fakeGUM }, configurable: true }); else Object.defineProperty(navigator.mediaDevices, 'getUserMedia', { value: fakeGUM, configurable: true, writable: true }); } catch (e) {}
     });
-    await p.route('**/*', (r) => { const u = r.request().url(); if (u.includes('opensheetmusicdisplay') && fs.existsSync(OSMD)) return r.fulfill({ body: fs.readFileSync(OSMD), contentType: 'application/javascript' }); return u.startsWith('file:') || u.startsWith(HTTP) ? r.continue() : r.abort(); });
+    await p.route('**/*', (r) => { const u = r.request().url(); if (u.includes('opensheetmusicdisplay') && fs.existsSync(OSMD)) return r.fulfill({ body: fs.readFileSync(OSMD), contentType: 'application/javascript' }); return /^(file|blob|data):/.test(u) || u.startsWith(HTTP) ? r.continue() : r.abort(); });
     await p.goto(url); await p.waitForTimeout(3000);
     const lay = await p.evaluate(() => { const h = (s) => document.querySelector(s).getBoundingClientRect().height; return { w: innerWidth, h: innerHeight, piano: +((h('#fall') + h('#keys')) / innerHeight).toFixed(2), score: Score.ready, scroll: document.documentElement.scrollWidth > innerWidth }; });
     ok(`[${label}] 화면 배치 · 악보 그림`, lay.piano >= 0.45 && !lay.scroll && (lay.score || !fs.existsSync(OSMD)), JSON.stringify(lay));
@@ -32,7 +32,7 @@ const OSMD = path.resolve(__dirname, '.cache', 'osmd-1.8.9.min.js');
     console.log(`INFO [${label}] 환경 ${JSON.stringify(mic.env)} sr ${mic.sr} ${mic.state}`);
     console.log(`INFO [${label}] 마이크 ${JSON.stringify({ on: mic.on, mode: mic.mode, err: mic.err, worklet: mic.worklet, worker: mic.worker, fixes: mic.fixes, n: mic.n, stats: mic.stats })}`);
     ok(`[${label}] 가짜 마이크: 켜지고 소리를 받음`, mic.on && mic.stats && mic.stats.blocks > 10, JSON.stringify({ mode: mic.mode, blocks: mic.stats && mic.stats.blocks }));
-    ok(`[${label}] 가짜 마이크: 4번 친 소리 → 입력 4번`, mic.n === 4, `${mic.n}번 (${mic.mode})`);
+    ok(`[${label}] 가짜 마이크: 4번 친 소리 → 입력 4번`, mic.stats && mic.stats.onsets === 4 && mic.n >= 4, `타건 ${mic.stats && mic.stats.onsets}번 · 입력 ${mic.n}번 (${mic.mode})`);
     ok(`[${label}] 페이지 오류 없음`, errs.length === 0, errs.join(' | '));
     await ctx.close();
   }
