@@ -1,5 +1,5 @@
 // 사용: node tests/omr_compare.js <원본 musicxml 폴더> <변환 결과 폴더>
-// 앱의 파서로 두 악보를 읽어 음(높이·시작·길이·손)을 비교한다. 하나라도 다르면 실패.
+// 앱의 파서로 두 악보를 읽어 음(높이·시작·길이·손)을 개수까지 비교한다. 하나라도 다르면 실패.
 const { chromium } = require('playwright'); const path = require('path'); const fs = require('fs');
 (async () => {
   const [srcDir, outDir] = process.argv.slice(2);
@@ -12,7 +12,9 @@ const { chromium } = require('playwright'); const path = require('path'); const 
     const r = await p.evaluate(([A, B]) => {
       const sa = buildSong(parseMusicXML(A), {}), sb = buildSong(parseMusicXML(B), {});
       const key = (n) => `${n.midi}@${n.startQ.toFixed(3)}/${n.durQ.toFixed(3)}/${n.hand}`;
-      const kb = new Set(sb.notes.map(key)); const miss = sa.notes.map(key).filter((k) => !kb.has(k));
+      // 같은 음이 여러 번 있으면 개수까지 맞아야 한다 (Set 비교는 중복을 놓침 — 이슈 #14)
+      const cnt = new Map(); for (const k of sb.notes.map(key)) cnt.set(k, (cnt.get(k) || 0) + 1);
+      const miss = []; for (const k of sa.notes.map(key)) { const c = cnt.get(k) || 0; if (c > 0) cnt.set(k, c - 1); else miss.push(k); }
       return { orig: sa.notes.length, omr: sb.notes.length, exact: sa.notes.length - miss.length, measures: [sa.measures.length, sb.measures.length], miss: miss.slice(0, 5) };
     }, [fs.readFileSync(path.join(srcDir, f), 'utf8'), fs.readFileSync(outF, 'utf8')]);
     const ok = r.exact === r.orig && r.omr === r.orig && r.measures[0] === r.measures[1];

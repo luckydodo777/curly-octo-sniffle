@@ -226,21 +226,57 @@ async function openPage(browser, opts = {}) {
     ok('변환 서버 결과를 받아 바로 열기 (로그인 없이)', r.title === 'synthetic_page' && r.kind === 'omr' && /완료/.test(r.chip) && posts === 2 && gotName === 'synthetic_page.png' && wakes >= 1, JSON.stringify({ ...r, posts, wakes, gotName }));
     ok('페이지 오류 없음', errs.length === 0, errs.join(' | ')); await p.close(); }
 
-  // 10) 악보 인식 결과 다듬기: 박자가 넘치는 마디는 그 성부만 마디 길이에 맞추고 "확인 필요"로 표시
+  // 10) MusicXML 해석 정확성 (이슈 #14): 박자 넘침은 표시만, 붙임줄은 성부별, 잇단음·divisions 변경·못갖춘마디
   { const { p, errs } = await openPage(browser);
     const r = await p.evaluate(() => {
-      const note = (st, dur, voice, staff) => `<note><pitch><step>${st}</step><octave>4</octave></pitch><duration>${dur}</duration><voice>${voice}</voice><staff>${staff}</staff></note>`;
-      const xml = `<?xml version="1.0"?><score-partwise><part-list><score-part id="P1"><part-name>P</part-name></score-part></part-list><part id="P1">
-        <measure number="1"><attributes><divisions>2</divisions><time><beats>3</beats><beat-type>4</beat-type></time><staves>2</staves></attributes>${note('C', 2, 1, 1)}${note('D', 2, 1, 1)}${note('E', 2, 1, 1)}<backup><duration>6</duration></backup>${note('C', 6, 5, 2)}</measure>
-        <measure number="2">${note('C', 2, 1, 1)}${note('D', 2, 1, 1)}${note('E', 2, 1, 1)}${note('F', 2, 1, 1)}<backup><duration>8</duration></backup>${note('C', 6, 5, 2)}</measure>
-        <measure number="3">${note('G', 2, 1, 1)}${note('A', 2, 1, 1)}<backup><duration>4</duration></backup>${note('C', 4, 5, 2)}</measure>
-      </part></score-partwise>`;
-      const a = parseMusicXML(xml), f = parseMusicXML(xml, { fit: true });
-      const m2 = f.notes.filter((n) => n.measure === 1 && n.staff === 1).map((n) => +n.startQ.toFixed(3));
-      return { plainLen: a.measures[1].lenQ, fitLen: f.measures[1].lenQ, m3start: f.measures[2].startQ, m2, flags: f.fitFlags.map((x) => x.m), lhStart: f.notes.find((n) => n.measure === 1 && n.staff === 2).startQ };
+      const N = (st, dur, voice, staff, extra = '', oct = 4) => `<note><pitch><step>${st}</step><octave>${oct}</octave></pitch><duration>${dur}</duration>${extra.includes('tie') ? extra.match(/<tie [^>]*\/>/g).join('') : ''}<voice>${voice}</voice><staff>${staff}</staff>${extra.replace(/<tie [^>]*\/>/g, '')}</note>`;
+      const T = (t) => `<tie type="${t}"/><notations><tied type="${t}"/></notations>`;
+      const wrap = (ms) => `<?xml version="1.0"?><score-partwise><part-list><score-part id="P1"><part-name>P</part-name></score-part></part-list><part id="P1">${ms.join('')}</part></score-partwise>`;
+      const attrs = (div, b, bt, staves = 2) => `<attributes><divisions>${div}</divisions><time><beats>${b}</beats><beat-type>${bt}</beat-type></time><staves>${staves}</staves></attributes>`;
+      const out = {};
+      // (a) 박자 넘침: 3/4 마디에 오른손 4박 → 시간은 그대로, 마디만 길어지고 표시
+      const xa = wrap([
+        `<measure number="1">${attrs(2, 3, 4)}${N('C', 2, 1, 1)}${N('D', 2, 1, 1)}${N('E', 2, 1, 1)}<backup><duration>6</duration></backup>${N('C', 6, 5, 2, '', 3)}</measure>`,
+        `<measure number="2">${N('C', 2, 1, 1)}${N('D', 2, 1, 1)}${N('E', 2, 1, 1)}${N('F', 2, 1, 1)}<backup><duration>8</duration></backup>${N('C', 6, 5, 2, '', 3)}</measure>`,
+        `<measure number="3">${N('G', 2, 1, 1)}${N('A', 2, 1, 1)}<backup><duration>4</duration></backup>${N('C', 4, 5, 2, '', 3)}</measure>`]);
+      const fa = parseMusicXML(xa, { fit: true }), pa = parseMusicXML(xa);
+      out.a = { rh: fa.notes.filter((n) => n.measure === 1 && n.staff === 1).map((n) => n.startQ), lh: fa.notes.find((n) => n.measure === 1 && n.staff === 2).startQ,
+        len: fa.measures[1].lenQ, m3: fa.measures[2].startQ, same: JSON.stringify(fa.notes.map((n) => [n.startQ, n.durQ])) === JSON.stringify(pa.notes.map((n) => [n.startQ, n.durQ])),
+        flags: fa.fitFlags.map((f) => f.m), msg: fa.fitFlags[0] && fa.fitFlags[0].issues[0] };
+      // (b) 두 성부의 같은 음 붙임줄 (GPT 재현 2)
+      const xb = wrap([`<measure number="1">${attrs(1, 4, 4, 1)}${N('C', 4, 1, 1, T('start'))}<backup><duration>4</duration></backup>${N('C', 4, 2, 1, T('start'))}</measure>`,
+        `<measure number="2">${N('C', 4, 1, 1, T('stop'))}<backup><duration>4</duration></backup>${N('C', 4, 2, 1, T('stop'))}</measure>`]);
+      const rb = parseMusicXML(xb);
+      out.b = { parsed: rb.notes.map((n) => [n.startQ, n.durQ, n.voice]), played: buildSong(rb, {}).notes.map((n) => [n.startQ, n.durQ]) };
+      // (c) 다른 단으로 넘어가는 붙임줄 (같은 성부)
+      const xc = wrap([`<measure number="1">${attrs(1, 4, 4)}${N('C', 4, 1, 1, T('start'))}</measure>`, `<measure number="2">${N('C', 4, 1, 2, T('stop'))}</measure>`]);
+      out.c = parseMusicXML(xc).notes.map((n) => [n.startQ, n.durQ]);
+      // (d) 한 성부의 붙임줄은 다른 성부의 같은 음과 섞이지 않음: 성부1 C4 이어짐, 성부2 C4는 2마디에서 새로 침
+      const xd = wrap([`<measure number="1">${attrs(1, 4, 4, 1)}${N('C', 4, 1, 1, T('start'))}<backup><duration>4</duration></backup>${N('C', 4, 2, 1)}</measure>`,
+        `<measure number="2">${N('C', 4, 1, 1, T('stop'))}<backup><duration>4</duration></backup>${N('C', 2, 2, 1)}${N('C', 2, 2, 1)}</measure>`]);
+      out.d = parseMusicXML(xd).notes.map((n) => [n.startQ, n.durQ, n.voice]);
+      // (e) 셋잇단(duration에 이미 비율 반영) + divisions 변경
+      const tm = '<time-modification><actual-notes>3</actual-notes><normal-notes>2</normal-notes></time-modification>';
+      const xe = wrap([`<measure number="1">${attrs(3, 2, 4, 1)}${N('C', 1, 1, 1, tm)}${N('D', 1, 1, 1, tm)}${N('E', 1, 1, 1, tm)}${N('F', 3, 1, 1)}</measure>`,
+        `<measure number="2"><attributes><divisions>4</divisions></attributes>${N('G', 4, 1, 1)}${N('A', 4, 1, 1)}</measure>`]);
+      const re_ = parseMusicXML(xe);
+      out.e = { starts: re_.notes.map((n) => +n.startQ.toFixed(4)), m2: re_.measures[1].startQ, m2len: re_.measures[1].lenQ };
+      // (f) 못갖춘마디(implicit)는 표시하지 않고 1박으로 시작
+      const xf = wrap([`<measure number="0" implicit="yes">${attrs(1, 4, 4, 1)}${N('G', 1, 1, 1)}</measure>`, `<measure number="1">${N('C', 4, 1, 1)}</measure>`]);
+      const rf = parseMusicXML(xf, { fit: true });
+      out.f = { len0: rf.measures[0].lenQ, m1: rf.measures[1].startQ, flags: rf.fitFlags.length, src: rf.notes[1].src };
+      // (g) 변환 서버 안내 합치기
+      out.g = omrFlags({ fitFlags: [{ m: 2, issues: ['길이'] }] }, [{ m: 0, text: '박자표 추정' }, { m: 2, text: '박자표 확인' }, { m: 'x', text: '무시' }]);
+      return out;
     });
-    ok('인식 오류 마디 맞추기: 넘치는 성부만 줄이고 다음 마디 박이 밀리지 않음', r.plainLen === 4 && r.fitLen === 3 && r.m3start === 6 && JSON.stringify(r.m2) === '[3,3.75,4.5,5.25]' && r.lhStart === 3, JSON.stringify(r));
-    ok('맞춘 마디·빠진 마디는 "확인 필요"로 표시', JSON.stringify(r.flags) === '[1,2]', JSON.stringify(r.flags));
+    ok('박자 넘침: 음 시간을 바꾸지 않음 (양손 동시성 유지)', JSON.stringify(r.a.rh) === '[3,4,5,6]' && r.a.lh === 3 && r.a.same && r.a.len === 4 && r.a.m3 === 7, JSON.stringify(r.a));
+    ok('박자 넘침·빠진 마디는 "확인 필요"로만 표시', JSON.stringify(r.a.flags) === '[1,2]' && /원본과 비교/.test(r.a.msg || ''), JSON.stringify(r.a.flags));
+    ok('두 성부 같은 음 붙임줄: 다시 치지 않음', JSON.stringify(r.b.parsed) === '[[0,8,"1"],[0,8,"2"]]' && JSON.stringify(r.b.played) === '[[0,8]]', JSON.stringify(r.b));
+    ok('다른 단으로 넘어가는 붙임줄 연결', JSON.stringify(r.c) === '[[0,8]]', JSON.stringify(r.c));
+    ok('붙임줄이 다른 성부의 같은 음과 섞이지 않음', JSON.stringify(r.d) === '[[0,8,"1"],[0,4,"2"],[4,2,"2"],[6,2,"2"]]', JSON.stringify(r.d));
+    ok('셋잇단(비율 두 번 곱하지 않음)·divisions 변경', JSON.stringify(r.e.starts) === '[0,0.3333,0.6667,1,2,3]' && r.e.m2 === 2 && r.e.m2len === 2, JSON.stringify(r.e));
+    ok('못갖춘마디는 짧은 그대로·표시 안 함·원본 위치 보존', r.f.len0 === 1 && r.f.m1 === 1 && r.f.flags === 0 && r.f.src && r.f.src.measure === '1' && r.f.src.offsetQ === 0, JSON.stringify(r.f));
+    ok('변환 서버 안내를 확인 필요 목록에 합침', JSON.stringify(r.g) === '[{"m":0,"issues":["박자표 추정"]},{"m":2,"issues":["박자표 확인","길이"]}]', JSON.stringify(r.g));
     ok('페이지 오류 없음', errs.length === 0, errs.join(' | ')); await p.close(); }
 
   await browser.close();
