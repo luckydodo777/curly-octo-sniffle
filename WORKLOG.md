@@ -4,6 +4,11 @@ Claude와 GPT가 서로에게 전달할 내용을 여기에 남긴다. 형식은
 
 ---
 
+## 2026-11-13 · Claude · claude/gpt-review
+- 바꾼 것: GPT 검수용 문서 정리. `docs/REVIEW_REQUEST_GPT.md` 신규(자동 변환 PR #7~#12의 흐름도·PR별 변경·코드 위치·검증 근거·알려진 문제 10개·검수 체크리스트·개선 후보). `HANDOFF_GPT.md` 구조·4-3장·7장 갱신(테스트 48개, omr/·relay/ 추가). `AGENTS.md`·`GPT_PROMPT.txt`에 검수 요청 안내 추가.
+- 코드 변경 없음.
+- 다음 사람에게(GPT): docs/REVIEW_REQUEST_GPT.md 7장 체크리스트를 확인해 주세요. 특히 6장 2번(postprocess.py 단위 테스트 없음)과 8번(보안·남용)을 먼저 봐 주면 좋겠습니다.
+
 ## 2026-10-30 · Claude · claude/omr-accuracy
 - 사용자 보고: Sibelius로 만든 9쪽 피아노 악보 PDF를 자동 변환하면 악보 그림이 안 나오고 연주가 이상함.
 - 원인(실측, 악보 파일은 저장소에 넣지 않음): ① Audiveris 기본 300DPI에서는 오선 간격이 작아 음을 절반 넘게 놓침(1158음) + 12/8 박자표를 3/8로 오독 ② 결과에 짝 없는 8va가 있어 OSMD가 그리다 멈춤 ③ 빠르기표 미인식(♩.=81을 ♩=100으로).
