@@ -4,6 +4,17 @@ Claude와 GPT가 서로에게 전달할 내용을 여기에 남긴다. 형식은
 
 ---
 
+## 2026-11-13 · Claude · claude/repeat-expand (이슈 #14 PR 2 후속)
+- 바꾼 것: 도돌이표·1/2번(·3번) 괄호를 연주 순서로 펼침.
+  - `parseMusicXML`: 첫 파트 마디마다 `rep{fwd, bwd(횟수), endStart, endStop, ending}` 수집, D.C./D.S./Coda/Fine/segno가 있으면 `raw.jumps`.
+  - `repeatOrder(ms)` → [{src, pass}], `expandRepeats(raw)` → 음·마디·빠르기를 연주 순서로 복제(음에 `pass`, `occ`=원본마디#회차). `buildSong`에서 설정 `expandRepeats`(기본 켬)일 때 적용. 원본 마디는 `song.srcMeasures`, 연주→원본 시간 변환 `song.toSrcQ`.
+  - 악보 커서: 원본 시간으로 위치를 찾음. 도돌이표로 앞으로 돌아갈 때는 PosLog에 `repeat`(정상)로 기록.
+  - 화면의 마디 번호는 모두 **원본 악보 기준**(구간 반복 입력·확인 필요·빠르기 표·악보 클릭·낙하 노트 번호). 반복 2회째는 "3(2회)"로 표시. 구간 반복 A~B는 A의 첫 연주부터 그 뒤 처음 나오는 B까지.
+  - 설정 "도돌이표대로 반복" 스위치. D.C.·D.S.·Coda가 있으면 아직 이동하지 않는다고 안내.
+- 테스트: run_all 68개 — 반복 순서 6가지(기본·여는 표 없음·1/2번 괄호·3회·두 구간·여러 마디 괄호), MusicXML 펼침(음·빠르기·occ·원본 시간), 원본 기준 마디 번호, 끄기/켜기, OSMD 커서가 펼친 연주에서도 원본 마디에 서는지.
+- 남은 것: D.C./D.S./Coda/Fine 이동, 반복 회차별 다른 가사·표시. 붙임줄이 반복 경계를 넘을 때(1번 괄호 → 처음)는 원본 그대로 늘어남.
+- 다음: 이슈 #14 PR 3(실제 피아노 입력: 같은 음 재타건, MIDI·마이크 공통 입력).
+
 ## 2026-11-13 · Claude · claude/score-position-sync (이슈 #14의 PR 2)
 - 바꾼 것:
   - 악보 커서(`Score.buildSteps/sync`): 커서 위치마다 OSMD iterator 순번 `k`를 저장해 그 순번으로 이동. 예전에는 목록 순번을 iterator 순번으로 썼고, 시간이 거꾸로 가는 위치를 만나면 목록을 끝내 버려 뒤쪽 커서가 멈출 수 있었음 → 앞으로 가는 위치만 모으고 계속 진행.
