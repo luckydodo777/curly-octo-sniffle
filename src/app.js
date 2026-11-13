@@ -1298,7 +1298,8 @@ function keyGeom(m, W) {
   if (!isBlack(m)) { const i = kb.whites.indexOf(m); return { x: i * kw, w: kw, black: false }; }
   const i = kb.whites.indexOf(m - 1); const bw = kw * 0.6; return { x: (i + 1) * kw - bw / 2, w: bw, black: true };
 }
-function roundRect(ctx, x, y, w, h, r) { r = Math.min(r, w / 2, h / 2); ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); }
+// 폭·높이가 0 이하(화면이 아주 좁거나 숨겨진 때)면 그리지 않는다 — 예전엔 반지름이 음수가 되어 오류가 나고 화면 갱신이 멈췄다
+function roundRect(ctx, x, y, w, h, r) { ctx.beginPath(); if (!(w > 0 && h > 0)) return; r = Math.max(0, Math.min(r, w / 2, h / 2)); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); }
 function handColor(h) { return h === "L" ? colors["--lh"] : colors["--rh"]; }
 
 function upcomingStep() {
@@ -1421,7 +1422,13 @@ fall.addEventListener("wheel", (e) => { if (!song) return; e.preventDefault(); s
    12) 메인 루프
    ============================================================ */
 let lastTs = performance.now(), lastMeasure = -1;
+let frameErrs = 0;
 function frame(ts) {
+  // 다음 프레임을 먼저 예약한다: 그리기 중 오류가 나도 재생·화면 갱신이 멈추지 않게
+  requestAnimationFrame(frame);
+  try { frameBody(ts); } catch (e) { if (frameErrs++ < 5) { console.warn("frame", e); PosLog.add("frame-error: " + String(e && e.message).slice(0, 60), E.pos, E.pos); } }
+}
+function frameBody(ts) {
   const dt = Math.min(0.1, (ts - lastTs) / 1000); lastTs = ts;
   if (song && E.playing) {
     if (E.countIn > 0) {
@@ -1433,7 +1440,6 @@ function frame(ts) {
   Score.sync(false);
   const mi = song ? measureAt(E.pos) : 0; if (mi !== lastMeasure) { lastMeasure = mi; updateReadouts(); }
   updatePrompt();
-  requestAnimationFrame(frame);
 }
 
 /* ============================================================
@@ -2312,7 +2318,8 @@ const Convert = {
       await openIt(); return;
     }
     if (j.status === "failed") { this.chip(`'${this.name}' 변환 실패: ${j.error || "알 수 없는 오류"} (더 선명한 PDF로 다시 올려 보세요)`, "bad"); this.jobId = null; this.remember(); return; }
-    const msg = j.status === "running" ? `악보를 인식하는 중… (${this.elapsed()})` : (this.kicked ? `변환 준비 중… (${this.elapsed()}, 보통 1~2분이면 열려요)` : `변환 순서를 기다리는 중… (${this.elapsed()}, 보통 5~10분 안에 시작돼요)`);
+    const late = j.status === "queued" && Date.now() - this.started > 10 * 60e3;
+    const msg = late ? `변환이 예상보다 늦어지고 있어요 (${this.elapsed()}). 조금 더 기다리거나, 같은 파일을 다시 올려 주세요.` : j.status === "running" ? `악보를 인식하는 중… (${this.elapsed()})` : (this.kicked ? `변환 준비 중… (${this.elapsed()}, 보통 1~2분이면 열려요)` : `변환 순서를 기다리는 중… (${this.elapsed()}, 보통 5~10분 안에 시작돼요)`);
     this.chip(`'${this.name}' ${msg}`, "", j.status === "queued" && !this.kicked);
     this.t = setTimeout(() => this.poll(), this.kicked || j.status === "running" ? 4000 : 10000);
   },
