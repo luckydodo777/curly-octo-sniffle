@@ -27,5 +27,9 @@ jobs:
         run: |
           npm install --no-save playwright@1.48.2
           npx playwright install --with-deps chromium
+      - name: 악보 그림 도구(OSMD 1.8.9) 받기 — 커서 동기화 시험용, 저장소에는 넣지 않음
+        run: |
+          mkdir -p tests/.cache
+          curl -fsSL -o tests/.cache/osmd-1.8.9.min.js https://github.com/opensheetmusicdisplay/opensheetmusicdisplay/releases/download/1.8.9/opensheetmusicdisplay.min.js || echo "::warning::OSMD를 받지 못해 커서 시험을 건너뜀"
       - name: 테스트 전체
         run: node tests/run_all.js

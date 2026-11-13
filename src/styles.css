@@ -176,3 +176,5 @@ ol.steps b{color:var(--ink)}
 .omr-dot{width:8px;height:8px;border-radius:50%;background:var(--accent);flex:none;animation:omrpulse 1.2s ease-in-out infinite}
 .omr-chip.ok .omr-dot{background:var(--ok);animation:none}.omr-chip.bad .omr-dot{background:var(--bad);animation:none}
 @keyframes omrpulse{50%{opacity:.25}}
+.omr-chip #omrChipOpen{border:1px solid var(--accent);color:var(--accent);background:transparent;font-size:13px;padding:2px 10px;border-radius:6px}
+.omr-chip #omrChipOpen[hidden]{display:none}

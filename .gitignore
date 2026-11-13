@@ -6,3 +6,4 @@ test-results/
 Thumbs.db
 __pycache__/
 *.pyc
+tests/.cache/
