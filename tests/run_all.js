@@ -474,6 +474,58 @@ async function openPage(browser, opts = {}) {
     ok('페이지 오류 없음 (마이크)', errs.length === 0, errs.join(' | '));
     await b2.close(); }
 
+  // 15) 화음 판정 (이슈 #14 PR 4): 0.2초 안에 함께 쳐야 맞음, 한 음씩 인정 설정, 마이크 화음
+  { const { p, errs } = await openPage(browser);
+    const r = await p.evaluate(async () => {
+      const G = GunbanNavi; const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      const chordSong = () => setSong({ title: 'c', tempos: [{ q: 0, bpm: 60 }], measures: [{ num: 1, startQ: 0, lenQ: 8, beats: 8, beatType: 4 }],
+        notes: [0, 2, 4, 6].flatMap((q) => [48, 60, 64, 67].map((m) => ({ midi: m, startQ: q, durQ: 2, staff: m < 60 ? 2 : 1, hand: m < 60 ? 'L' : 'R', measure: 0 }))) }, { kind: 'musicxml', name: 'c', persist: false });
+      const start = async () => { chordSong(); G.settings.countIn = false; G.setMode('wait'); G.setHands('both'); G.setRate(1); G.seek(0, false, 'test'); G.play(); for (let i = 0; i < 200 && !G.E.waiting; i++) await sleep(20); };
+      const hit = (ms) => ms.forEach((m) => { G.Input.on(m, 0.7, 'kb'); G.Input.off(m); });
+      const out = {};
+      G.settings.chordLoose = false; await start();
+      hit([48, 60, 64, 67]); out.together = G.E.waitIdx; // 함께 → 1칸
+      for (let i = 0; i < 200 && !G.E.waiting; i++) await sleep(20);
+      for (const m of [48, 60, 64, 67]) { hit([m]); await sleep(260); } out.apart = G.E.waitIdx; // 0.26초 간격 → 그대로
+      hit([48, 60, 64, 67]); out.again = G.E.waitIdx; // 다시 함께 → 진행
+      G.pause(); G.settings.chordLoose = true; await start();
+      for (const m of [48, 60, 64, 67]) { hit([m]); await sleep(260); } out.loose = G.E.waitIdx; G.pause(); G.settings.chordLoose = false;
+      // 마이크 화음 이벤트
+      await start(); G.Mic.on = true; const mk = () => G.E.mistakes;
+      const ev = (midis) => { G.Mic.handle({ type: 'chord', midis, sounding: midis }); midis.forEach((m) => G.Mic.handle({ type: 'off', midi: m })); };
+      ev([48, 60, 64, 67, 79]); out.micExtra = [G.E.waitIdx, mk()]; // 배음 오인(솔5) 하나 섞임 → 진행, 틀린 음 0
+      for (let i = 0; i < 200 && !G.E.waiting; i++) await sleep(20);
+      out.waitingBeforeWrong = G.E.waiting; ev([48, 60, 64, 69]); out.micWrong = [G.E.waitIdx, mk()]; // 솔 대신 라 → 그대로, 틀린 음으로 세지 않음(불확실)
+      ev([50, 65]); out.micAllWrong = [G.E.waitIdx, mk()]; // 맞는 음이 하나도 없음 → 틀린 음 2
+      ev([48, 64, 67]); out.micOct = G.E.waitIdx; // 도3+도4 중 도4가 안 들려도 진행 (옥타브 겹침)
+      G.Mic.on = false; G.pause();
+      // 화음 분석기 (합성 피아노, 화음 모양 400개): 정밀도·재현율
+      let seed = 5; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647; const sr = 48000;
+      const synth = (notes) => { const n = 4096; const x = new Float32Array(n); for (const m of notes) { const f = 440 * Math.pow(2, (m - 69) / 12); const ph = rnd() * 6.28; for (let h = 1; h <= 10; h++) { const fh = h * f * Math.sqrt(1 + 0.0004 * h * h); if (fh > sr / 2) break; const a = 0.2 / Math.pow(h, 1.1) * (0.6 + 0.8 * rnd()); for (let i = 0; i < n; i++) x[i] += a * Math.sin(2 * Math.PI * fh * i / sr + ph * h); } } return x; };
+      const shapes = [[0, 4, 7], [0, 3, 7], [0, 4, 7, 10], [0, 4, 7, 12], [0, 7, 12, 16], [-12, 0, 4, 7], [0, 5, 9], [0, 3, 8], [-12, 0, 7, 16], [0, 4, 7, 11, 14], [0], [0, 12], [0, 7]];
+      const A = G.createMicAnalyzer(sr, { poly: true }); let tp = 0, fp = 0, fn = 0, ex = 0; const T = 400; const t0 = performance.now();
+      for (let k = 0; k < T; k++) { const sh = shapes[Math.floor(rnd() * shapes.length)]; const root = 48 + Math.floor(rnd() * 20); const truth = sh.map((d) => root + d);
+        const est = A.estimatePitches(synth(truth)).map((q) => q.midi); const tr = new Set(truth); let t = 0; est.forEach((m) => (tr.has(m) ? t++ : fp++)); tp += t; fn += truth.length - t; if (t === truth.length && est.length === truth.length) ex++; }
+      // 화음 연속 (페달 없음): 화음마다 한 번, 들린 음은 모두 실제로 친 음 / 같은 음 연타도 매번
+      const strikeAdd = (x, m, t0, amp, stopAt) => { const f = 440 * Math.pow(2, (m - 69) / 12); const i0 = Math.round(t0 * sr), i1 = stopAt ? Math.round(stopAt * sr) : x.length; const hs = Array.from({ length: 10 }, (_, h) => 1 / Math.pow(h + 1, 1.1) * (0.7 + 0.6 * rnd())); const ph = rnd() * 6;
+        for (let i = i0; i < x.length; i++) { const tt = (i - i0) / sr; let env = Math.min(1, tt / 0.005) * Math.exp(-tt / 1.0) * amp; if (i >= i1) env *= Math.exp(-(i - i1) / sr / 0.01); if (tt > 0.01 && env < 1e-5) break; let v = 0; for (let h = 0; h < 10; h++) { if ((h + 1) * f > sr / 2) break; v += hs[h] * Math.sin(2 * Math.PI * (h + 1) * f * tt + ph * (h + 1)); } x[i] += env * v + (tt < 0.004 ? (rnd() * 2 - 1) * 0.3 * amp * (1 - tt / 0.004) : 0); } };
+      const runSeq = (chords, gap) => { const x = new Float32Array(Math.round((chords.length * gap + 0.6) * sr)); chords.forEach((c, k) => c.forEach((m) => strikeAdd(x, m, 0.1 + k * gap, 0.12, 0.1 + (k + 1) * gap - 0.03)));
+        const B = G.createMicAnalyzer(sr, { poly: true }); const ev = []; for (let i = 0; i + 512 <= x.length; i += 512) ev.push(...B.feed(x.slice(i, i + 512), (i + 512) / sr)); return ev.filter((e) => e.type === 'chord').map((e) => e.midis); };
+      const seq = [[48, 60, 64, 67], [53, 60, 65, 69], [55, 59, 62, 67], [48, 60, 64, 67]];
+      const got = runSeq(seq, 0.6); out.seq = { n: got.length, subset: got.every((g, k) => seq[k] && g.every((m) => seq[k].includes(m))), got: got.map((g) => g.join(',')) };
+      out.single = runSeq([[60], [60], [64], [67]], 0.4).map((g) => g.join(',')).join(' ');
+      out.poly = { P: +(tp / (tp + fp)).toFixed(3), R: +(tp / (tp + fn)).toFixed(3), exact: +(ex / T).toFixed(3), msPer: +((performance.now() - t0) / T).toFixed(1) };
+      return out;
+    });
+    ok('화음: 함께 치면 진행, 0.26초씩 떨어져 치면 그대로, 다시 함께 치면 진행', r.together === 1 && r.apart === 1 && r.again === 2, JSON.stringify(r));
+    ok('설정 "화음을 한 음씩 쳐도 인정"', r.loose === 1, String(r.loose));
+    ok('마이크 화음: 배음 오인 섞여도 진행·틀린 음 0', r.micExtra[0] === 1 && r.micExtra[1] === 0, JSON.stringify(r.micExtra));
+    ok('마이크 화음: 한 음 틀리면 머무름(불확실하니 틀린 음으로 안 셈), 맞는 음이 없으면 틀린 음', r.waitingBeforeWrong && r.micWrong[0] === 1 && r.micWrong[1] === 0 && r.micAllWrong[0] === 1 && r.micAllWrong[1] === 2, JSON.stringify([r.micWrong, r.micAllWrong]));
+    ok('마이크 화음: 옥타브 겹친 음은 하나만 들려도 진행', r.micOct === 2, String(r.micOct));
+    ok('화음 분석기 (합성 화음 400개): 정밀도 ≥ 0.9, 재현율 ≥ 0.8', r.poly.P >= 0.9 && r.poly.R >= 0.8, JSON.stringify(r.poly));
+    ok('마이크 화음 흐름: 화음 4번 → 4번, 들린 음은 모두 친 음 / 같은 음 연타', r.seq.n === 4 && r.seq.subset && r.single === '60 60 64 67', JSON.stringify([r.seq, r.single]));
+    ok('페이지 오류 없음', errs.length === 0, errs.join(' | ')); await p.close(); }
+
   // 13) 악보 커서 ↔ 연주 위치 (OSMD 1.8.9 필요): 못갖춘마디·박자 넘침 마디·도돌이표가 있어도 커서가 연주 위치 마디에 있고 뒤로 가지 않음
   if (fs.existsSync(OSMD_LOCAL)) {
     const { p, errs } = await openPage(browser, { osmd: true });
