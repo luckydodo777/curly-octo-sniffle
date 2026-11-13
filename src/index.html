@@ -115,6 +115,7 @@
         <button class="btn small" id="loopAll" type="button">곡 전체</button>
       </div>
       <div class="row"><label for="autoSpeed">틀리지 않으면 속도 +5%<div class="sub">따라치기에서 한 바퀴를 완벽하게 치면 올라가요 (100%까지)</div></label><span class="switch"><input type="checkbox" id="autoSpeed"></span></div>
+      <div class="row"><label for="chordLoose">화음을 한 음씩 쳐도 인정<div class="sub">따라치기에서 화음을 처음 익힐 때 켜세요. 끄면 0.2초 안에 함께 쳐야 맞아요</div></label><span class="switch"><input type="checkbox" id="chordLoose"></span></div>
     </div>
 
     <div class="sec">
@@ -144,7 +145,8 @@
     <div class="sec">
       <h3>입력 장치</h3>
       <div class="row"><span>전자피아노 (MIDI)<div class="status" id="midiStatus">연결 안 됨</div></span><button class="btn small" id="midiBtn" type="button">연결</button></div>
-      <div class="row"><span>마이크 (베타)<div class="status" id="micStatus">한 번에 한 음만 알아들어요</div></span><button class="btn small" id="micBtn" type="button">켜기</button></div>
+      <div class="row"><span>마이크 (베타)<div class="status" id="micStatus">꺼져 있어요</div></span><button class="btn small" id="micBtn" type="button">켜기</button></div>
+      <div class="row"><label for="micChord">마이크로 화음도 알아듣기 (베타)<div class="sub">여러 음을 함께 쳐도 알아들어요. 끄면 한 번에 한 음만, 조금 더 빨리 반응해요</div></label><span class="switch"><input type="checkbox" id="micChord"></span></div>
       <div class="status">PC 키보드: <span class="kbd">A</span><span class="kbd">S</span><span class="kbd">D</span>… = 흰건반, <span class="kbd">W</span><span class="kbd">E</span><span class="kbd">T</span>… = 검은건반, <span class="kbd">Z</span>/<span class="kbd">X</span> 옥타브 이동 (지금 <b id="octLabel">도4</b>부터)</div>
     </div>
 
