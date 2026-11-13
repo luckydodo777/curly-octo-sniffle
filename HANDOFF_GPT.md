@@ -93,7 +93,7 @@ node tests/run_all.js                 # 48개 테스트, "모두 통과"가 나�
 ## 4-3. 무료 자동 변환 (토큰 없는 OMR)
 - PDF·사진 → MusicXML 을 오픈소스 **Audiveris 5.11.0** 으로 변환한다. AI 토큰을 쓰지 않는다. 자세한 흐름도·근거·한계는 `docs/REVIEW_REQUEST_GPT.md`.
 - 흐름: 업로드(`autoConvert`) → 로그인 안 했으면 Firebase 익명 로그인(`Library.ensureUser`) → `users/{uid}/omrJobs/{id}`(원본 chunks) + `omrQueue/{id}` → 중계기(`OMR_KICK_URL`, `relay/kick-worker.js`)가 `omr.yml`을 바로 실행(없으면 5분 cron) → `omr/worker.py --run --linger 600` → `users/{uid}/songs/{새 id}`(kind "omr") → 앱이 진행 표시(`Convert`)를 보다가 완료되면 자동으로 연다.
-- 정확도 보정: PDF 첫 쪽 오선 간격을 재서 DPI 자동 선택(작은 오선만 400DPI 안팎), PDF 글자층에서 빠르기표 읽기, 박자표 누락·오독 보정(`omr/postprocess.py`). 앱은 kind "omr" 악보를 `parseMusicXML(xml, {fit:true})`로 읽어 박자가 넘치는 성부를 마디 길이에 맞추고 해당 마디를 "확인 필요"로 표시한다. 악보 그림(OSMD)이 실패하면 8va 등 표시를 빼고 다시 그린다.
+- 정확도 보정: PDF 첫 쪽 오선 간격을 재서 DPI 자동 선택(작은 오선만 400DPI 안팎), PDF 글자층에서 빠르기표 읽기, 박자표 누락·오독 보정(`omr/postprocess.py`). 앱은 kind "omr" 악보를 `parseMusicXML(xml, {fit:true})`로 읽어 박자표와 길이가 다른 마디를 "확인 필요"로 **표시만** 한다(음 시간은 바꾸지 않음, PR #15). 적힌 박자표는 바꾸지 않고, 없을 때만 추정해 넣는다. 다듬기 전 원래 결과는 `big.xmlRaw`, 안내는 `omrNotes`로 저장. 악보 그림(OSMD)이 실패하면 8va 등 표시를 빼고 다시 그린다.
 - 필요한 설정: Firebase Auth(Google·익명), Firestore + `firestore.rules`, GitHub 비밀값 `FIREBASE_SERVICE_ACCOUNT`, Cloudflare Worker(`GH_TOKEN` 비밀값). 모두 사용자 계정에 설정 완료(2026-10-30).
 - 회귀 시험: `omr-test.yml` 이 `omr/test/*.musicxml`을 PDF로 만들어 다시 읽고(작업자 + Docker 서버 두 경로) 음 단위 100% 일치를 확인한다(`tests/omr_compare.js`).
 - 알려진 한계: Audiveris가 박자표 변화를 놓치면 뒤 마디 음이 빠짐(후처리로 복구 불가). 손가락 번호 "3"을 셋잇단으로 오인할 수 있음. 공개 저장소라 Actions 로그는 공개 → 워커는 파일 이름·내용을 로그에 남기지 않는다.

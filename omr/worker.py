@@ -75,13 +75,14 @@ def convert(audiveris, src_path, workdir, title=""):
     if not mxls:
         tail = "\n".join((p.stdout + p.stderr).splitlines()[-15:])
         raise RuntimeError("Audiveris가 악보를 찾지 못했어요 (오선이 보이는 선명한 악보인지 확인해 주세요)\n" + tail)
-    xml = mxl_to_xml(mxls[0])
+    xml = raw_xml = mxl_to_xml(mxls[0])
     try:
         from postprocess import polish
         xml, rep = polish(xml, src_path, title)
     except Exception as e:  # noqa: BLE001  (다듬기가 실패해도 원래 결과는 쓴다)
         rep = {"polishError": str(e)[:200]}
-    info = {"dpi": dpi or None, "interline300": il300, "tempos": rep.get("tempos", []), "timeFixes": rep.get("timeFixes", []),"seconds": round(time.time() - t, 1), "movements": len(mxls), "measures": len(re.findall(r"<measure[\s>]", xml)) // max(1, len(re.findall(r"<part[\s>]", xml)))}
+    info = {"dpi": dpi or None, "interline300": il300, "tempos": rep.get("tempos", []), "timeFixes": rep.get("timeFixes", []), "notes": rep.get("notes", []), "polishError": rep.get("polishError"), "seconds": round(time.time() - t, 1), "movements": len(mxls), "measures": len(re.findall(r"<measure[\s>]", xml)) // max(1, len(re.findall(r"<part[\s>]", xml)))}
+    info["_raw"] = raw_xml  # Audiveris 원래 결과 (다듬기 전). 호출한 쪽에서 꺼내 쓴다(info 로 저장하지 않음)
     return xml, info
 
 
@@ -92,6 +93,9 @@ def local_mode(args):
         with tempfile.TemporaryDirectory() as w:
             try:
                 xml, info = convert(args.audiveris, f, w, os.path.splitext(os.path.basename(f))[0])
+                raw_xml = info.pop("_raw", None)
+                if raw_xml is not None and raw_xml != xml:
+                    open(os.path.join(args.local[1], os.path.splitext(os.path.basename(f))[0] + ".raw.musicxml"), "w", encoding="utf-8").write(raw_xml)
                 name = os.path.splitext(os.path.basename(f))[0] + ".musicxml"
                 open(os.path.join(args.local[1], name), "w", encoding="utf-8").write(xml)
                 print(f"OK {os.path.basename(f)} {info}")
@@ -164,12 +168,15 @@ def process_queue(db, args):
                 src = os.path.join(w, "score" + ext)
                 open(src, "wb").write(raw)
                 xml, info = convert(args.audiveris, src, w, re.sub(r"\.[^.]+$", "", job.get("name") or ""))
+            raw_xml = info.pop("_raw", None)
             # 내 악보함에 새 곡으로 저장 (앱의 Library.open 이 읽는 형식과 같게)
             title = re.sub(r"\.[^.]+$", "", job.get("name") or "변환한 악보")
             m = re.search(r"<work-title>([^<]+)</work-title>", xml) or re.search(r"<movement-title>([^<]+)</movement-title>", xml)
             song_ref = db.collection(f"users/{uid}/songs").document()
             sp = f"users/{uid}/songs/{song_ref.id}"
             big = {"xml": put_big(db, sp, "xml", xml)}
+            if raw_xml and raw_xml != xml:  # 다듬기 전 원래 인식 결과도 보관 (되돌리기·비교용)
+                big["xmlRaw"] = put_big(db, sp, "xmlRaw", raw_xml)
             b64 = base64.b64encode(raw).decode()
             if len(raw) <= 6_000_000:
                 big["orig"] = put_big(db, sp, "orig", b64)
@@ -180,7 +187,9 @@ def process_queue(db, args):
                 "createdAt": now, "updatedAt": now, "flags": [], "report": None, "fixed": [], "tempos": [],
                 "big": big, "original": {"name": job.get("name", ""), "type": job.get("type", ""), "size": len(raw)} if "orig" in big else None,
                 "stats": {"sessions": 0, "lastAcc": None, "bestAcc": None, "totalSec": 0, "lastAt": None},
-                "omr": {"engine": "Audiveris", "seconds": info["seconds"], "movements": info["movements"]},
+                "omr": {"engine": "Audiveris", "seconds": info["seconds"], "movements": info["movements"], "dpi": info.get("dpi"),
+                        "tempos": info.get("tempos", []), "timeFixes": info.get("timeFixes", [])},
+                "omrNotes": info.get("notes", []),  # 앱이 '확인 필요'로 표시할 안내 [{m, text}]
             })
             job_ref.set({"status": "done", "songId": song_ref.id, "finishedAt": now, "info": info}, merge=True)
             print(f"[{job_id}] 완료: {info['measures']}마디, {info['seconds']}초")

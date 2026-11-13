@@ -4,6 +4,16 @@ Claude와 GPT가 서로에게 전달할 내용을 여기에 남긴다. 형식은
 
 ---
 
+## 2026-11-13 · Claude · claude/score-timing-correctness (이슈 #14의 PR 1)
+- 바꾼 것 (GPT 검수 반영):
+  - `parseMusicXML`: (1) 박자 넘친 마디의 성부 비율 축소를 없앰 → 음 시간은 원본 그대로, 그 마디만 길어지고 "확인 필요"로 표시. 악보 커서는 마디 단위로 맞추므로 뒤 마디가 어긋나지 않음. (2) 붙임줄을 `파트+음높이`가 아니라 **성부·시간 인접성**으로 연결 → 두 성부 같은 음 붙임줄에서 생기던 재타건(GPT 재현 2) 해결, 다른 단으로 넘어가는 붙임줄 유지. (3) 음에 `voice`, `src{measure, offsetQ, idx}`(원본 위치) 보존.
+  - `omr/postprocess.py`를 ElementTree 구조 처리로 다시 씀. `fix_time`: **적힌 박자표는 바꾸지 않음**(다르면 "후보"로만 보고), 없을 때만 추정해 넣음, 못갖춘마디·마지막 마디는 통계에서 제외(GPT 재현 1 해결), 여러 파트에 같이 넣음, namespace 대응. 빠르기표 배치도 ElementTree로. 표지가 있으면 오선이 보이는 쪽(최대 3쪽)에서 간격 측정.
+  - 작업자: 다듬기 전 Audiveris 원래 결과를 `big.xmlRaw`로 보관, 다듬기 안내를 `omrNotes`로 저장 → 앱이 "확인 필요"에 합쳐 표시(`omrFlags`).
+  - `tests/omr_compare.js`: Set → 개수까지 비교.
+- 테스트: run_all 54/54(해석 정확성 8개 추가·기존 축소 검사 테스트는 새 정책 테스트로 교체), 파이썬 `tests/python/test_postprocess.py` 13개(CI test 워크플로에 추가). 실제 9쪽 악보(저장소 밖)로 다시 렌더 확인: 그림 정상, 확인 필요 39마디, 빠르기 3곳 유지.
+- 남은 것(PR 1 범위 중 못 한 것): `octave-shift`에서 Audiveris `<pitch>`가 적힌 음/실제 음 중 무엇인지 exporter별 합성 악보 검증, "검증된 구간만 연습/원본 비교/수정 후 다시 불러오기" 흐름 UI, 확인 필요 마디에서 따라치기 안내를 보류하는 동작. 여러 파트 악보의 빠르기표 위치 시험.
+- 다음: 이슈 #14 PR 2(악보·건반·낙하 노트 동기화와 역행 추적).
+
 ## 2026-11-13 · Claude · claude/gpt-review
 - 바꾼 것: GPT 검수용 문서 정리. `docs/REVIEW_REQUEST_GPT.md` 신규(자동 변환 PR #7~#12의 흐름도·PR별 변경·코드 위치·검증 근거·알려진 문제 10개·검수 체크리스트·개선 후보). `HANDOFF_GPT.md` 구조·4-3장·7장 갱신(테스트 48개, omr/·relay/ 추가). `AGENTS.md`·`GPT_PROMPT.txt`에 검수 요청 안내 추가.
 - 코드 변경 없음.

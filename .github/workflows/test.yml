@@ -13,6 +13,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
+      - name: 변환 후처리 파이썬 테스트 (omr/postprocess.py)
+        run: python -m unittest discover -s tests/python -v
       - name: 빌드
         run: python build.py
       - name: dist가 src와 같은지 확인

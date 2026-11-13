@@ -472,12 +472,15 @@ function parseMusicXML(xmlText, opts = {}) {
   const parts = directKids(root, "part");
   if (!parts.length) throw new Error("악보에 파트가 없어요.");
   const measures = []; const tempos = []; const notes = [];
-  const partInfo = []; const fitFlags = new Map(); // opts.fit: 악보 인식 결과의 박자 오류를 마디 길이에 맞춰 고침
+  // opts.fit: 악보 인식(OMR) 결과 점검. 박자표와 길이가 다른 마디를 "확인 필요"로 표시만 하고 음의 시간은 바꾸지 않는다.
+  //   (예전에는 넘치는 성부를 비율로 줄였는데, 양손 동시성과 악보 커서 위치가 어긋나서 그만둠 — 이슈 #14)
+  const partInfo = []; const fitFlags = new Map();
   parts.forEach((part, pi) => {
     let divisions = 1, transpose = 0, staves = 1, beats = 4, beatType = 4, qStart = 0;
-    const clefs = {}; const ties = new Map();
+    const clefs = {}; const ties = new Map(); // "파트:음높이" → 아직 이어지는 음 목록 [{note, voice}]
     directKids(part, "measure").forEach((m, mi) => {
-      let pos = 0, maxPos = 0, lastStart = 0; const mNotes = []; const vEnd = {};
+      let pos = 0, maxPos = 0, lastStart = 0, idx = -1;
+      const numAttr = m.getAttribute("number");
       for (const el of m.children) {
         const nn = el.nodeName;
         if (nn === "attributes") {
@@ -507,6 +510,7 @@ function parseMusicXML(xmlText, opts = {}) {
           }
           if (bpm > 0 && pi === 0) tempos.push({ q: qStart + pos, bpm });
         } else if (nn === "note") {
+          idx++;
           const isChord = !!el.querySelector("chord");
           const isGrace = !!el.querySelector("grace");
           if (el.querySelector("cue")) continue;
@@ -514,8 +518,6 @@ function parseMusicXML(xmlText, opts = {}) {
           const start = isChord ? lastStart : pos;
           if (!isChord) { lastStart = pos; pos += d; }
           maxPos = Math.max(maxPos, pos);
-          const vk = (kidText(el, "staff") || "1") + "/" + (kidText(el, "voice") || "1");
-          vEnd[vk] = Math.max(vEnd[vk] || 0, start + d);
           if (isGrace || el.querySelector("rest") || !el.querySelector("pitch")) continue;
           const step = kidText(el, "pitch > step"), alter = parseFloat(kidText(el, "pitch > alter")) || 0, oct = parseInt(kidText(el, "pitch > octave"));
           if (!(step in STEP_PC) || isNaN(oct)) continue;
@@ -524,33 +526,39 @@ function parseMusicXML(xmlText, opts = {}) {
           const fing = kidText(el, "notations technical fingering");
           const tieTypes = [...el.querySelectorAll("tie")].map((t) => t.getAttribute("type"))
             .concat([...el.querySelectorAll("notations tied")].map((t) => t.getAttribute("type")));
-          const key = pi + ":" + midi;
-          if (tieTypes.includes("stop") && ties.has(key)) {
-            const prev = ties.get(key);
-            prev.durQ = Math.max(prev.durQ, qStart + start + d - prev.startQ);
-            if (!tieTypes.includes("start")) ties.delete(key);
-            continue;
+          const voice = kidText(el, "voice") || "1";
+          const key = pi + ":" + midi, abs = qStart + start;
+          if (tieTypes.includes("stop")) {
+            // 붙임줄 끝: 같은 성부에서 바로 앞에 끝난 같은 음에 잇는다. 성부 정보가 다르면(성부 표기 누락·다른 단 넘김) 시간이 맞닿은 음에 잇는다.
+            const open = ties.get(key) || [];
+            const ends = (o) => Math.abs(o.note.startQ + o.note.durQ - abs) < 1e-3;
+            let hit = open.find((o) => o.voice === voice && ends(o)) || open.find((o) => ends(o) && !open.some((x) => x !== o && x.voice === voice && ends(x)));
+            if (!hit && open.length === 1 && open[0].voice === voice) hit = open[0];
+            if (hit) {
+              hit.note.durQ = Math.max(hit.note.durQ, abs + d - hit.note.startQ);
+              if (!tieTypes.includes("start")) open.splice(open.indexOf(hit), 1);
+              continue;
+            }
           }
-          const note = { midi, startQ: qStart + start, durQ: Math.max(d, 0.0625), staff, part: pi, measure: mi, finger: fing ? parseInt(fing) || null : null };
-          notes.push(note); mNotes.push([note, vk]);
-          if (tieTypes.includes("start")) ties.set(key, note);
+          const note = { midi, startQ: abs, durQ: Math.max(d, 0.0625), staff, voice, part: pi, measure: mi, finger: fing ? parseInt(fing) || null : null,
+            src: { measure: numAttr || String(mi + 1), offsetQ: start, idx } }; // 원본 악보 위치 (마디 번호·마디 안 위치·마디 안 몇 번째 음)
+          notes.push(note);
+          if (tieTypes.includes("start")) { if (!ties.has(key)) ties.set(key, []); ties.get(key).push({ note, voice }); }
         }
       }
       const nominal = beats * 4 / beatType;
+      const implicit = m.getAttribute("implicit") === "yes";
       if (opts.fit && maxPos > nominal + 1e-3) {
-        // 박자가 넘치는 성부만 마디 길이에 맞게 줄인다 (음 순서는 그대로, 다른 성부와 박이 맞음)
-        for (const [n, vk] of mNotes) { const e = vEnd[vk] || 0; if (e > nominal + 1e-3) { const f = nominal / e; n.startQ = qStart + (n.startQ - qStart) * f; n.durQ = Math.max(n.durQ * f, 0.0625); } }
-        if (pi === 0 || !fitFlags.has(mi)) fitFlags.set(mi, `박자가 맞지 않게 읽혀 길이를 맞춤 (${+maxPos.toFixed(2)}박 → ${+nominal.toFixed(2)}박)`);
-        maxPos = nominal;
-      } else if (opts.fit && maxPos > 1e-6 && maxPos < nominal - 1e-3 && mi > 0 && m.getAttribute("implicit") !== "yes" && !fitFlags.has(mi)) {
+        // 시간은 그대로 둔다(악보 그림·양손 동시성 유지). 이 마디만 길어지고, 다음 마디는 이 마디가 끝난 뒤 시작한다.
+        if (!fitFlags.has(mi)) fitFlags.set(mi, `박자표보다 음이 길게 인식됨 (${+maxPos.toFixed(2)}박 / ${+nominal.toFixed(2)}박) — 음 길이가 잘못 읽혔을 수 있어요. 원본과 비교해 주세요`);
+      } else if (opts.fit && maxPos > 1e-6 && maxPos < nominal - 1e-3 && mi > 0 && !implicit && !fitFlags.has(mi)) {
         fitFlags.set(mi, `음이 빠졌을 수 있음 (${+maxPos.toFixed(2)}박 / ${+nominal.toFixed(2)}박)`);
       }
       let lenQ;
       if (pi === 0) {
         if (maxPos <= 1e-6) lenQ = nominal;
-        else if (maxPos < nominal - 1e-6 && !(mi === 0 || m.getAttribute("implicit") === "yes")) lenQ = nominal;
+        else if (maxPos < nominal - 1e-6 && !(mi === 0 || implicit)) lenQ = nominal;
         else lenQ = maxPos;
-        const numAttr = m.getAttribute("number");
         measures.push({ num: /^\d+$/.test(numAttr || "") ? parseInt(numAttr) : mi + 1, startQ: qStart, lenQ, beats, beatType });
       } else {
         lenQ = measures[mi] ? measures[mi].lenQ : (maxPos || nominal);
@@ -561,6 +569,12 @@ function parseMusicXML(xmlText, opts = {}) {
   });
   assignHandsXML(notes, partInfo);
   return { title: title || "제목 없는 악보", composer, notes, measures, tempos, fitFlags: [...fitFlags].map(([m, t]) => ({ m, issues: [t] })) };
+}
+// 자동 변환 악보의 "확인 필요" 목록 = 앱이 찾은 박자 문제 + 변환 서버가 남긴 안내(omrNotes: [{m, text}])
+function omrFlags(raw, notes) {
+  const map = new Map((raw.fitFlags || []).map((f) => [f.m, [...f.issues]]));
+  for (const n of notes || []) if (n && Number.isInteger(n.m) && n.text) { if (!map.has(n.m)) map.set(n.m, []); map.get(n.m).unshift(n.text); }
+  return [...map].sort((a, b) => a[0] - b[0]).map(([m, issues]) => ({ m, issues }));
 }
 function avgPitch(list) { return list.length ? list.reduce((s, n) => s + n.midi, 0) / list.length : 60; }
 function assignHandsXML(notes, partInfo) {
@@ -1640,7 +1654,7 @@ function setSong(raw, meta) {
   computeRange(); setRate(settings.rate);
   seek(loopRange() ? loopRange().start : 0);
   Score.show(current.xml);
-  try { if (meta.persist !== false) localStorage.setItem(STORE_KEY + ":last", JSON.stringify({ kind: meta.kind, name: meta.name || "", xml: current.xml, midiB64: meta.midiB64 || null, flags: current.flags, report: current.report, fixed: current.fixed, ai: current.ai ? { json: current.ai.json, ranges: current.ai.ranges } : null, cloudId: current.cloudId })); } catch (e) {}
+  try { if (meta.persist !== false) localStorage.setItem(STORE_KEY + ":last", JSON.stringify({ kind: meta.kind, name: meta.name || "", xml: current.xml, midiB64: meta.midiB64 || null, flags: current.flags, omrNotes: meta.omrNotes || null, report: current.report, fixed: current.fixed, ai: current.ai ? { json: current.ai.json, ranges: current.ai.ranges } : null, cloudId: current.cloudId })); } catch (e) {}
   if (meta.persist !== false && meta.kind !== "demo" && !meta.fromLibrary) Library.autoSave(meta.file || null, !!meta.sameSong);
   if ($("#libModal") && !$("#libModal").hidden) renderLibrary();
 }
@@ -1818,7 +1832,7 @@ const Library = {
     if (d.title && (!raw.title || raw.title === "제목 없는 악보")) raw.title = d.title; // 자동 변환 악보는 제목이 없을 때가 많다
     if (Array.isArray(d.tempos) && d.tempos.length) raw.tempos = d.tempos.map((t) => ({ ...t }));
     const aiObj = ai ? JSON.parse(ai) : null;
-    setSong(raw, { kind: d.kind, xml: xml || null, name: d.name, midiB64: midi || null, flags: d.kind === "omr" ? raw.fitFlags || [] : d.flags || [], report: d.report || null, fixed: d.fixed || [], ai: aiObj, cloudId: id, fromLibrary: true });
+    setSong(raw, { kind: d.kind, xml: xml || null, name: d.name, midiB64: midi || null, flags: d.kind === "omr" ? omrFlags(raw, d.omrNotes) : d.flags || [], omrNotes: d.omrNotes || null, report: d.report || null, fixed: d.fixed || [], ai: aiObj, cloudId: id, fromLibrary: true });
     current.hasCloudOriginal = !!(d.original && big.orig);
     toast(d.kind === "omr" && !(d.tempos && d.tempos.length) && !(raw.tempos && raw.tempos.length) ? `'${d.title}'을(를) 열었어요. 자동 변환은 빠르기표를 읽지 못하니, 설정 → 빠르기에서 악보의 ♩= 숫자로 고쳐 주세요.` : `'${d.title}'을(를) 열었어요`);
   },
@@ -2388,7 +2402,7 @@ async function serverConvert(file) {
     if (!data || !data.xml) throw new Error((data && data.error) || `변환 서버 오류 (${res ? res.status : "연결 안 됨"})`);
     phase = "여는 중";
     const raw = parseMusicXML(data.xml, { fit: true }); if (!raw.title || raw.title === "제목 없는 악보" || /^(title|untitled)$/i.test(raw.title.trim())) raw.title = file.name.replace(/\.[^.]+$/, "");
-    setSong(raw, { kind: "omr", xml: data.xml, name: file.name, file, flags: raw.fitFlags });
+    setSong(raw, { kind: "omr", xml: data.xml, name: file.name, file, flags: omrFlags(raw, data.info && data.info.notes), omrNotes: (data.info && data.info.notes) || null });
     clearInterval(timer);
     Convert.chip(`'${file.name}' 변환 완료! (${Convert.elapsed()})`, "ok"); setTimeout(() => Convert.chip(""), 5000);
     toast("자동 변환은 빠르기표를 읽지 못해요. 빠르기가 다르면 설정 → 빠르기에서 악보의 ♩= 숫자로 고쳐 주세요.");
@@ -2481,7 +2495,7 @@ function boot() {
   try {
     const last = JSON.parse(localStorage.getItem(STORE_KEY + ":last") || "null");
     if (last && last.kind !== "demo") {
-      if (last.xml) { const raw = parseMusicXML(last.xml, { fit: last.kind === "omr" }); if (Array.isArray(last.tempos) && last.tempos.length) raw.tempos = last.tempos; setSong(raw, { kind: last.kind, xml: last.xml, name: last.name, flags: last.kind === "omr" ? raw.fitFlags : last.flags || [], report: last.report || null, fixed: last.fixed || [], ai: last.ai || null, persist: false }); restored = true; }
+      if (last.xml) { const raw = parseMusicXML(last.xml, { fit: last.kind === "omr" }); if (Array.isArray(last.tempos) && last.tempos.length) raw.tempos = last.tempos; setSong(raw, { kind: last.kind, xml: last.xml, name: last.name, flags: last.kind === "omr" ? omrFlags(raw, last.omrNotes) : last.flags || [], omrNotes: last.omrNotes || null, report: last.report || null, fixed: last.fixed || [], ai: last.ai || null, persist: false }); restored = true; }
       else if (last.midiB64) { const raw = parseMIDI(unb64(last.midiB64)); raw.title = (last.name || "").replace(/\.[^.]+$/, ""); setSong(raw, { kind: "midi", name: last.name, persist: false }); restored = true; }
     }
   } catch (e) {}
