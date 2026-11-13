@@ -23,7 +23,7 @@ const STORE_KEY = "gunban-navi-v1";
 const settings = Object.assign({
   rate: 1, mode: "listen", hands: "both", loopOn: false, loopA: 1, loopB: 4, autoSpeed: false,
   accomp: true, guide: false, countIn: true, inputSound: true, volume: 0.8, metro: false,
-  soundSet: "sal", steadyTempo: false, expandRepeats: true, chordLoose: false, micChord: true, view: "all", labels: "sol", fingers: true, range: "fit", zoom: 1, scoreZoom: 0.8, kbBase: 60
+  soundSet: "sal", steadyTempo: false, expandRepeats: true, chordLoose: false, micChord: true, sideCollapsed: false, view: "all", labels: "sol", fingers: true, range: "fit", zoom: 1, scoreZoom: 0.8, kbBase: 60
 }, (() => { try { return JSON.parse(localStorage.getItem(STORE_KEY) || "{}"); } catch (e) { return {}; } })());
 function saveSettings() { try { localStorage.setItem(STORE_KEY, JSON.stringify(settings)); } catch (e) {} }
 
@@ -865,6 +865,7 @@ window.addEventListener("keydown", (e) => {
   if (e.metaKey || e.ctrlKey || e.altKey) return;
   if (!$("#aiModal").hidden) return;
   if (e.code === "Space") { e.preventDefault(); if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur(); if (!e.repeat) togglePlay(); return; }
+  if (e.code === "Backslash" && !e.repeat && innerWidth > 900) { e.preventDefault(); setSideCollapsed(!settings.sideCollapsed); return; }
   if (e.code === "ArrowLeft") { e.preventDefault(); stepMeasure(-1); return; }
   if (e.code === "ArrowRight") { e.preventDefault(); stepMeasure(1); return; }
   if (e.code === "Home") { e.preventDefault(); restart(); return; }
@@ -1519,6 +1520,19 @@ $("#soundSub").textContent = soundSubText[settings.soundSet || "sal"];
 $("#soundSel").onchange = async (e) => { const v = e.target.value; $("#soundSub").textContent = "불러오는 중…"; await Sound.setSet(v); $("#soundSub").textContent = soundSubText[v]; Sound.ensure(); Sound.note(60, 0.6, 0.6); Sound.note(64, 0.5, 0.6); Sound.note(67, 0.5, 0.6); };
 $("#midiBtn").onclick = connectMIDI;
 $("#micBtn").onclick = () => Mic.on ? Mic.stop() : Mic.start();
+// 넓은 화면에서 오른쪽 연습 설정을 접고 펴기 (건반·악보에 집중). 상태는 기억한다.
+function setSideCollapsed(c, quiet) {
+  settings.sideCollapsed = !!c; saveSettings();
+  $("#app").classList.toggle("side-collapsed", settings.sideCollapsed);
+  const b = $("#sideToggle"); b.setAttribute("aria-expanded", String(!settings.sideCollapsed));
+  $("#sideToggleText").textContent = settings.sideCollapsed ? "설정 펼치기" : "설정 접기";
+  $("#sideToggleArrow").setAttribute("d", settings.sideCollapsed ? "M12 10l-2 2 2 2" : "M10 10l2 2-2 2");
+  // 넓어진 화면에 맞춰 건반·낙하 노트·악보를 다시 그린다
+  setTimeout(() => window.dispatchEvent(new Event("resize")), 30);
+  if (!quiet) toast(settings.sideCollapsed ? "연습 설정을 접었어요. 위의 '설정 펼치기'나 \\ 키로 다시 열 수 있어요" : "연습 설정을 펼쳤어요");
+}
+$("#sideToggle").onclick = () => setSideCollapsed(!settings.sideCollapsed);
+setSideCollapsed(settings.sideCollapsed, true);
 $("#panelBtn").onclick = () => $("#side").classList.add("open");
 $("#closePanel").onclick = () => $("#side").classList.remove("open");
 $("#demoBtn").onclick = () => loadDemo();
