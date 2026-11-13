@@ -178,3 +178,8 @@ ol.steps b{color:var(--ink)}
 @keyframes omrpulse{50%{opacity:.25}}
 .omr-chip #omrChipOpen{border:1px solid var(--accent);color:var(--accent);background:transparent;font-size:13px;padding:2px 10px;border-radius:6px}
 .omr-chip #omrChipOpen[hidden]{display:none}
+/* 오른쪽 연습 설정 접기 (넓은 화면) */
+.only-desktop{display:inline-flex}
+.app.side-collapsed{grid-template-columns:minmax(0,1fr);grid-template-areas:"top" "main" "bar"}
+.app.side-collapsed .side{display:none}
+@media (max-width:900px){.only-desktop{display:none}.app.side-collapsed .side{display:block}}

@@ -538,6 +538,21 @@ async function openPage(browser, opts = {}) {
     ok('화면이 0 크기여도 오류 없이 재생 계속', r.thrown === null && r.pos > 0.3 && r.frameErr === 0, JSON.stringify(r));
     ok('페이지 오류 없음', errs.length === 0, errs.join(' | ')); await p.close(); }
 
+  // 17) 오른쪽 연습 설정 접기 (넓은 화면): 버튼·\ 키, 기억, 좁은 화면에서는 버튼 숨김
+  { const { p, errs } = await openPage(browser);
+    const w0 = await p.evaluate(() => document.querySelector('#fall').getBoundingClientRect().width);
+    await p.click('#sideToggle'); await p.waitForTimeout(400);
+    const a = await p.evaluate(() => ({ side: getComputedStyle(document.querySelector('#side')).display, fall: document.querySelector('#fall').getBoundingClientRect().width, text: document.querySelector('#sideToggleText').textContent, exp: document.querySelector('#sideToggle').getAttribute('aria-expanded'), saved: JSON.parse(localStorage.getItem('gunban-navi-v1')).sideCollapsed }));
+    await p.reload(); await p.waitForTimeout(1000);
+    const kept = await p.evaluate(() => getComputedStyle(document.querySelector('#side')).display);
+    await p.keyboard.press('Backslash'); await p.waitForTimeout(300);
+    const back = await p.evaluate(() => getComputedStyle(document.querySelector('#side')).display);
+    await p.setViewportSize({ width: 600, height: 850 }); await p.waitForTimeout(300);
+    const mob = await p.evaluate(() => getComputedStyle(document.querySelector('#sideToggle')).display);
+    ok('연습 설정 접기: 접으면 건반·낙하 노트가 넓어짐', a.side === 'none' && a.fall > w0 + 200 && a.text === '설정 펼치기' && a.exp === 'false' && a.saved === true, JSON.stringify([w0, a]));
+    ok('접힌 상태 기억 · \\ 키로 펼치기 · 좁은 화면은 기존 설정 버튼', kept === 'none' && back === 'block' && mob === 'none', JSON.stringify([kept, back, mob]));
+    ok('페이지 오류 없음', errs.length === 0, errs.join(' | ')); await p.close(); }
+
   // 13) 악보 커서 ↔ 연주 위치 (OSMD 1.8.9 필요): 못갖춘마디·박자 넘침 마디·도돌이표가 있어도 커서가 연주 위치 마디에 있고 뒤로 가지 않음
   if (fs.existsSync(OSMD_LOCAL)) {
     const { p, errs } = await openPage(browser, { osmd: true });
