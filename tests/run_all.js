@@ -619,6 +619,8 @@ async function openPage(browser, opts = {}) {
       // 듣기(재생 중): 미리 보여 주지 않음 — 지금 울리는 음만
       G.settings.countIn = false; G.setMode('listen'); G.seek(0, false, 'test'); G.play(); await sleep(250);
       const t = G.guideTargets(); out.listen = [t.up.size, t.act.size > 0]; G.pause();
+      // 듣기(멈춤): 음이 울리는 자리에서는 그 음만(다음 음을 함께 켜지 않음)
+      const s1 = G.song.steps[1]; G.seek(s1.start, false, 'test'); const t1 = G.guideTargets(); out.pausedOn = [t1.up.size, t1.act.has(s1.notes[0].midi)];
       return out;
     });
     // 끌어서 위치 옮기기는 내려오는 음표를 켰을 때만 (실제 마우스로)
@@ -635,7 +637,7 @@ async function openPage(browser, opts = {}) {
     r.dragOn = Math.abs((await dragFall()) - r.pos1) > 1e-3;
     r.back = await p.evaluate(async () => { document.querySelector('#fallNotes').click(); await new Promise((r) => setTimeout(r, 100)); return document.querySelector('#app').classList.contains('keys-first'); });
     ok('기본 화면: 내려오는 음표 꺼짐 · 건반 크게(안내 줄 + 건반) · 음표 간격 설정 숨김', r.def[0] === false && r.def[1] && !r.def[2] && r.def[3] && r.sizes.keys >= 280 && r.sizes.lane >= 90 && r.sizes.lane <= 180 && r.sizes.score >= 150, JSON.stringify([r.def, r.sizes]));
-    ok('지금 칠 건반만: 따라치기는 기다리는 음, 듣기는 미리 보여 주지 않고 울리는 음만', r.wait && r.listen[0] === 0 && r.listen[1], JSON.stringify([r.wait, r.listen]));
+    ok('지금 칠 건반만: 따라치기는 기다리는 음, 듣기는 미리 보여 주지 않고 울리는 음만', r.wait && r.listen[0] === 0 && r.listen[1] && r.pausedOn[0] === 0 && r.pausedOn[1], JSON.stringify([r.wait, r.listen, r.pausedOn]));
     ok('내려오는 음표는 추가 기능: 켜면 음표 영역이 커지고 미리 표시·끌어서 이동, 끄면 기본 화면', r.on[0] && !r.on[1] && !r.on[2] && r.on[3] && r.listenAhead && r.dragOff && r.dragOn && r.back, JSON.stringify([r.on, r.listenAhead, r.dragOff, r.dragOn, r.back]));
     ok('페이지 오류 없음', errs.length === 0, errs.join(' | ')); await p.close(); }
 

@@ -1942,7 +1942,9 @@ function guideTargets() {
   const from = lowerBound(song.notes, E.pos - song.maxDur - 0.01);
   for (let i = from; i < song.notes.length; i++) { const n = song.notes[i]; if (n.start > E.pos + 1e-4) break; if (n.end > E.pos && n.start <= E.pos + 1e-4) { if (practiceHas(n.hand) || settings.accomp) act.set(n.midi, n); } }
   const st = upcomingStep();
-  const ahead = settings.fallNotes ? (st && st.start - E.pos < 1.2) : !E.playing; // 듣기 모드에서 미리 표시할지
+  // 듣기 모드에서 다음 음을 미리 표시할지: 내려오는 음표를 켰으면 1.2초 앞, 기본 화면은 멈춰 있고 지금 울리는 내 손 음이 없을 때만
+  const mineNow = [...act.values()].some((n) => practiceHas(n.hand));
+  const ahead = settings.fallNotes ? (st && st.start - E.pos < 1.2) : (!E.playing && !mineNow);
   if (st && (settings.mode === "wait" || ahead)) st.notes.forEach((n) => { if (practiceHas(n.hand)) up.set(n.midi, n); });
   return { act, up };
 }
