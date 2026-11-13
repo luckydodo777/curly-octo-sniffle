@@ -553,6 +553,43 @@ async function openPage(browser, opts = {}) {
     ok('접힌 상태 기억 · \\ 키로 펼치기 · 좁은 화면은 기존 설정 버튼', kept === 'none' && back === 'block' && mob === 'none', JSON.stringify([kept, back, mob]));
     ok('페이지 오류 없음', errs.length === 0, errs.join(' | ')); await p.close(); }
 
+  // 18) 태블릿(아이패드) 연습: 첫 음을 치면 따라치기 자동 시작, 작은 마이크 소리도 인식, 들린 음 표시, 마이크 안내, 화면 배치
+  { const { p, errs } = await openPage(browser, { viewport: { width: 1180, height: 820 } });
+    const r = await p.evaluate(async () => {
+      const G = GunbanNavi; const out = {};
+      // 따라치기 + 멈춤 상태에서 첫 음을 치면 시작
+      G.pause(); G.setMode('wait'); G.setHands('both'); G.seek(0, false, 'test'); G.settings.countIn = true;
+      out.hint = !document.querySelector('#inputHint').hidden; // 마이크·전자피아노 없으면 안내
+      const st = G.song.steps[0]; st.notes.forEach((n) => G.Input.on(n.midi, 0.7, 'kb')); st.notes.forEach((n) => G.Input.off(n.midi));
+      out.autostart = [G.E.playing, G.E.countIn <= 0, G.E.waitIdx];
+      // 틀린 음으로는 시작하지 않음
+      G.pause(); G.seek(0, false, 'test'); G.Input.on(30, 0.7, 'kb'); G.Input.off(30); out.wrongStarts = G.E.playing; G.pause();
+      // 작은 소리(아이패드 마이크처럼): 예전 기준(0.01)보다 작은 소리도 10번 인식
+      const sr = 48000, N = Math.round(3.5 * sr), x = new Float32Array(N); let seed = 3; const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647) * 2 - 1;
+      for (let k = 0; k < 10; k++) { const t0 = 0.1 + k * 0.3, i0 = Math.round(t0 * sr), i1 = Math.round((t0 + 0.27) * sr);
+        for (let i = i0; i < N; i++) { const tt = (i - i0) / sr; let env = Math.min(1, tt / 0.005) * Math.exp(-tt / 0.8) * 0.006; if (i >= i1) env *= Math.exp(-(i - i1) / sr / 0.01); if (tt > 0.01 && env < 1e-6) break;
+          x[i] += env * (Math.sin(2 * Math.PI * 440 * tt) + 0.5 * Math.sin(4 * Math.PI * 440 * tt)) + (tt < 0.004 ? rnd() * 0.002 : 0); } }
+      for (let i = 0; i < N; i++) x[i] += rnd() * 0.0004;
+      const A = G.createMicAnalyzer(sr); const ev = []; for (let i = 0; i + 512 <= N; i += 512) ev.push(...A.feed(x.slice(i, i + 512), (i + 512) / sr));
+      out.quiet = ev.filter((e) => e.type === 'on').length; out.levels = ev.filter((e) => e.type === 'level').length;
+      let rms = 0; for (let i = 0; i < N; i++) rms += x[i] * x[i]; out.rms = +Math.sqrt(rms / N).toFixed(4);
+      // 들린 음 표시
+      G.Mic.on = true; G.Mic.handle({ type: 'on', midi: 69 }); out.heard = document.querySelector('#heard').hidden ? '' : document.querySelector('#heard').textContent;
+      G.Mic.handle({ type: 'level', r: 0.05, floor: 0.001 }); out.lvl = document.querySelector('#micQuick').style.getPropertyValue('--lvl'); G.Mic.handle({ type: 'off', midi: 69 }); G.Mic.on = false;
+      // 화면 배치: 피아노(낙하 노트+건반)가 화면 높이의 절반 이상, 설정은 서랍(1180px 터치 아님 → 접기 버튼 대신 서랍)
+      const h = (s2) => document.querySelector(s2).getBoundingClientRect().height;
+      out.pianoShare = +((h('#fall') + h('#keys')) / innerHeight).toFixed(2);
+      out.sideFixed = getComputedStyle(document.querySelector('#side')).position;
+      out.line = document.querySelector('#app').classList.contains('score-line');
+      return out;
+    });
+    ok('따라치기: 멈춰 있을 때 첫 음을 맞게 치면 바로 시작(준비 박자 없이), 틀린 음은 시작 안 함', r.autostart[0] && r.autostart[1] && r.autostart[2] === 1 && r.wrongStarts === false, JSON.stringify(r));
+    ok('마이크·전자피아노가 없으면 따라치기에서 마이크 켜기 안내', r.hint, String(r.hint));
+    ok('작은 마이크 소리(RMS 약 0.003)도 같은 음 10번 인식 · 소리 크기 이벤트', r.quiet === 10 && r.levels > 50 && r.rms < 0.01, JSON.stringify([r.quiet, r.levels, r.rms]));
+    ok('들린 음 표시 · 마이크 버튼 소리 크기 표시', /라4|A4/.test(r.heard) && parseFloat(r.lvl) > 0.5, JSON.stringify([r.heard, r.lvl]));
+    ok('태블릿 가로(1180×820): 피아노가 화면 절반 이상, 설정은 서랍, 악보 한 줄', r.pianoShare >= 0.5 && r.sideFixed === 'fixed' && r.line, JSON.stringify([r.pianoShare, r.sideFixed, r.line]));
+    ok('페이지 오류 없음', errs.length === 0, errs.join(' | ')); await p.close(); }
+
   // 13) 악보 커서 ↔ 연주 위치 (OSMD 1.8.9 필요): 못갖춘마디·박자 넘침 마디·도돌이표가 있어도 커서가 연주 위치 마디에 있고 뒤로 가지 않음
   if (fs.existsSync(OSMD_LOCAL)) {
     const { p, errs } = await openPage(browser, { osmd: true });

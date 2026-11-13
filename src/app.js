@@ -23,7 +23,7 @@ const STORE_KEY = "gunban-navi-v1";
 const settings = Object.assign({
   rate: 1, mode: "listen", hands: "both", loopOn: false, loopA: 1, loopB: 4, autoSpeed: false,
   accomp: true, guide: false, countIn: true, inputSound: true, volume: 0.8, metro: false,
-  soundSet: "sal", steadyTempo: false, expandRepeats: true, chordLoose: false, micChord: true, sideCollapsed: false, view: "all", labels: "sol", fingers: true, range: "fit", zoom: 1, scoreZoom: 0.8, kbBase: 60
+  soundSet: "sal", steadyTempo: false, expandRepeats: true, chordLoose: false, micChord: true, sideCollapsed: false, scoreLayout: "line", view: "all", labels: "sol", fingers: true, range: "fit", zoom: 1, scoreZoom: 0.8, kbBase: 60
 }, (() => { try { return JSON.parse(localStorage.getItem(STORE_KEY) || "{}"); } catch (e) { return {}; } })());
 function saveSettings() { try { localStorage.setItem(STORE_KEY, JSON.stringify(settings)); } catch (e) {} }
 
@@ -754,15 +754,15 @@ function stepSatisfied(st) {
 function pruneHits(now) { if (settings.chordLoose) return; for (const [m, t] of E.hits) if (now - t > CHORD_WINDOW_MS) E.hits.delete(m); }
 function consumeStep() { const st = song.steps[E.waitIdx]; if (st) { E.correct += requiredOf(st).length; E.prevStep = new Set(requiredOf(st).map((n) => n.midi)); } E.waitIdx++; E.hits.clear(); updateStats(); }
 
-function play() {
+function play(opts = {}) {
   if (!song) return;
   Sound.ensure();
   const lr = loopRange();
   if (E.finished || E.pos >= song.duration - 0.01) seek(lr ? lr.start : 0, false, "restart");
   if (lr && (E.pos < lr.start - 0.01 || E.pos >= lr.end - 0.01)) seek(lr.start, false, "loop");
   E.playing = true; E.loopTold = false; Practice.start();
-  if (settings.countIn) startCountIn();
-  setPlayIcon();
+  if (settings.countIn && !opts.noCountIn) startCountIn();
+  setPlayIcon(); updateInputHint();
 }
 function pause() { if (E.playing) Practice.flush(); E.playing = false; E.countIn = 0; $("#countdown").hidden = true; setPlayIcon(); }
 function togglePlay() { E.playing ? pause() : play(); }
@@ -832,6 +832,11 @@ function accText() { const t = E.correct + E.mistakes; return t ? Math.round(E.c
    ============================================================ */
 function userNoteOn(midi, vel = 0.75, src = "screen", opts = {}) {
   if (midi < 21 || midi > 108) return;
+  // 따라치기에서 멈춰 있을 때 첫 음을 맞게 치면 바로 시작한다 (▶를 누르러 손을 뗄 필요 없음)
+  if (settings.mode === "wait" && song && !E.playing && !E.finished) {
+    const st = nextWaitStep();
+    if (st && requiredOf(st).some((n) => n.midi === midi) && st.start - E.pos < 4) { seek(st.start, false, "autostart"); play({ noCountIn: true }); }
+  }
   heldKeys.add(midi);
   if (settings.inputSound) {
     const old = userVoices.get(midi); if (old) old.release();
@@ -865,7 +870,7 @@ window.addEventListener("keydown", (e) => {
   if (e.metaKey || e.ctrlKey || e.altKey) return;
   if (!$("#aiModal").hidden) return;
   if (e.code === "Space") { e.preventDefault(); if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur(); if (!e.repeat) togglePlay(); return; }
-  if (e.code === "Backslash" && !e.repeat && innerWidth > 900) { e.preventDefault(); setSideCollapsed(!settings.sideCollapsed); return; }
+  if (e.code === "Backslash" && !e.repeat && getComputedStyle($("#sideToggle")).display !== "none") { e.preventDefault(); setSideCollapsed(!settings.sideCollapsed); return; }
   if (e.code === "ArrowLeft") { e.preventDefault(); stepMeasure(-1); return; }
   if (e.code === "ArrowRight") { e.preventDefault(); stepMeasure(1); return; }
   if (e.code === "Home") { e.preventDefault(); restart(); return; }
@@ -888,7 +893,7 @@ async function connectMIDI() {
       const names = [];
       midiAccess.inputs.forEach((inp) => { names.push(inp.name); inp.onmidimessage = onMidiMsg; });
       st.textContent = names.length ? "연결됨: " + names.join(", ") : "연결된 MIDI 기기가 없어요. 케이블을 꽂으면 자동으로 잡혀요.";
-      st.classList.toggle("on", names.length > 0);
+      st.classList.toggle("on", names.length > 0); updateInputHint();
       if (names.length && settings.inputSound && !midiAccess._muted) { midiAccess._muted = true; settings.inputSound = false; $("#inputSound").checked = false; saveSettings(); toast("전자피아노 소리를 쓰도록 앱의 입력음은 껐어요"); }
     };
     midiAccess.onstatechange = bind; bind();
@@ -927,7 +932,7 @@ function createMicAnalyzer(sr, opt = {}) {
   const ring = new Float32Array(WIN); let filled = 0;
   // 화음용: 최근 4096샘플(약 85ms)과 타건 직전 상태
   const BIG = 4096, big = new Float32Array(BIG), bigPrev = new Float32Array(BIG); let polyWait = 0, polyTries = 0, pre = null, curSet = new Set();
-  const hist = [], hfHist = []; let floor = 0.003, cur = null, wait = 0, tries = 0, tryMidi = null, lastOnsetT = -1, quiet = 0, hop = 0, cand = null, candN = 0, prevRms = 0, prevHf = 0, lastSample = 0;
+  const hist = [], hfHist = []; const floorHist = []; let floor = 0.003, cur = null, wait = 0, tries = 0, tryMidi = null, lastOnsetT = -1, quiet = 0, hop = 0, cand = null, candN = 0, prevRms = 0, prevHf = 0, lastSample = 0;
   function pitch() {
     // 최근 WIN 샘플에서 자기상관. 첫 봉우리 중 가장 높은 것의 88% 이상인 가장 짧은 주기
     const N = WIN; let e0 = 0; for (let i = 0; i < N; i += 2) e0 += ring[i] * ring[i];
@@ -994,8 +999,12 @@ function createMicAnalyzer(sr, opt = {}) {
       let r = 0, hf = 0, last = lastSample; for (let i = 0; i < block.length; i++) { r += block[i] * block[i]; const d = block[i] - last; hf += d * d; last = block[i]; } lastSample = last;
       r = Math.sqrt(r / block.length); hf = Math.sqrt(hf / block.length);
       hist.push(r); hfHist.push(hf); if (hist.length > 8) { hist.shift(); hfHist.shift(); }
-      if (r < floor * 3) floor = floor * 0.98 + r * 0.02; // 조용할 때 잡음 수준을 따라감
-      const loud = r > Math.max(0.01, floor * 4);
+      // 잡음 수준 = 최근 약 2초 동안 가장 조용했던 블록. 내려갈 땐 바로, 올라갈 땐 천천히(페달로 계속 울려도 끌려 올라가지 않게), 최대 0.003
+      floorHist.push(r); if (floorHist.length > 190) floorHist.shift();
+      floor = Math.max(1e-5, Math.min(Math.min(...floorHist) * 1.2, floor * 1.002, 0.003));
+      // 소리 있음 기준: 잡음의 4배 이상, 최소 0.0025 (아이패드 등 기기 마이크는 소리가 작게 들어와 예전 0.01은 너무 높았다)
+      const loud = r > Math.max(opt.minLevel || 0.0025, floor * 4);
+      if (hop % 4 === 0) ev.push({ type: "level", r: +r.toFixed(5), floor: +floor.toFixed(5), t });
       const minOf = (a) => Math.min(...a.slice(0, -1).concat([1]));
       // 새 타건: 최근(약 80ms) 최저보다 소리가 1.5배 이상(또는 고음역 변화가 2배 이상) 커지고, 직전 블록보다도 커짐. 70ms 안에는 한 번만
       // 화음 모드는 여러 음이 겹쳐 맥놀이(크기 출렁임)가 생기므로 기준을 높인다: 해머 타격의 고음역 변화, 또는 크기가 1.8배 이상 커질 때
@@ -1086,11 +1095,14 @@ const Mic = {
     // 스피커에서 나는 앱 소리를 피아노로 착각하지 않도록 앱 소리를 잠시 끈다 (끄면 되돌림)
     const keys = ["accomp", "guide", "metro", "inputSound"]; const loud = keys.filter((k) => settings[k]);
     if (loud.length) { this.saved = Object.fromEntries(keys.map((k) => [k, settings[k]])); keys.forEach((k) => { settings[k] = false; const el = $("#" + k); if (el) el.checked = false; }); $("#metroBtn").setAttribute("aria-pressed", "false"); toast("마이크가 앱 소리를 피아노 소리로 착각하지 않도록 반주·안내음·메트로놈·입력음을 잠시 껐어요. 마이크를 끄면 다시 켜져요."); }
+    this.stats = { blocks: 0, onsets: 0, maxLevel: 0, lastLevel: 0, since: performance.now() }; this.syncUi();
     this.status(`듣는 중 · ${settings.micChord ? "화음도(최대 6음, 베타)" : "한 번에 한 음"} · ${this.rangeText()} · 헤드폰을 쓰면 더 정확해요`, true); $("#micBtn").textContent = "끄기";
   },
-  curSet: new Set(),
+  curSet: new Set(), stats: { blocks: 0, onsets: 0, maxLevel: 0, lastLevel: 0, since: 0 },
   handle(e, capturedAt) {
     if (!this.on) return;
+    if (e.type === "level") { this.level(e.r, e.floor); return; }
+    if (e.type === "chord" || e.type === "on") { this.stats.onsets++; this.heard(e.type === "chord" ? e.midis : [e.midi]); }
     if (e.type === "chord") {
       const fresh = e.midis.filter((m) => { const r = Sound.recent.get(m); return !(r && performance.now() - r < 250); });
       if (!fresh.length) return;
@@ -1119,7 +1131,26 @@ const Mic = {
     clearInterval(this.timer); this.an = null;
     if (this.cur != null) Input.off(this.cur); this.cur = null; this.curSet.forEach((m) => Input.off(m)); this.curSet.clear();
     if (this.saved) { Object.entries(this.saved).forEach(([k, v]) => { settings[k] = v; const el = $("#" + k); if (el) el.checked = !!v; }); $("#metroBtn").setAttribute("aria-pressed", String(!!settings.metro)); saveSettings(); this.saved = null; }
-    this.status("꺼져 있어요"); $("#micBtn").textContent = "켜기";
+    this.status("꺼져 있어요"); $("#micBtn").textContent = "켜기"; this.syncUi();
+  },
+  // 소리 크기 표시(바의 마이크 버튼 둘레)와 "소리가 작아요" 안내
+  level(r, floor) {
+    const st = this.stats; st.blocks++; st.lastLevel = r; st.maxLevel = Math.max(st.maxLevel * 0.995, r);
+    const db = 20 * Math.log10(Math.max(r, 1e-6)); const lvl = Math.max(0, Math.min(1, (db + 60) / 45));
+    const b = $("#micQuick"); if (b) b.style.setProperty("--lvl", lvl.toFixed(2));
+    if (!st.warned && performance.now() - st.since > 8000 && st.onsets === 0 && st.maxLevel < 0.004) { st.warned = true; this.status("소리가 아주 작게 들려요. 기기를 피아노 가까이(악보대 위) 두고 조금 세게 쳐 보세요.", true); }
+  },
+  // 들린 음을 잠깐 보여 준다 (인식이 되는지 바로 알 수 있게)
+  heard(midis) {
+    const el = $("#heard"); if (!el) return;
+    el.textContent = "들린 음 " + midis.map((m) => fullName(m)).join(" ");
+    el.hidden = false; clearTimeout(this.heardT); this.heardT = setTimeout(() => { el.hidden = true; }, 1600);
+  },
+  syncUi() {
+    const b = $("#micQuick"); if (!b) return;
+    b.setAttribute("aria-pressed", String(this.on)); b.title = this.on ? "마이크로 듣는 중 (누르면 끄기)" : "마이크로 실제 피아노 소리 듣기";
+    if (!this.on) b.style.setProperty("--lvl", "0");
+    updateInputHint();
   },
   reset() { if (this.cur != null) Input.off(this.cur); this.cur = null; this.curSet.forEach((m) => Input.off(m)); this.curSet.clear(); },
 };
@@ -1158,15 +1189,16 @@ const Score = {
       try {
         $("#osmd").innerHTML = "";
         const osmd = new lib.OpenSheetMusicDisplay($("#osmd"), {
-          autoResize: true, backend: "svg", drawTitle: true, drawSubtitle: false, drawComposer: true, drawCredits: false,
-          drawPartNames: false, drawFingerings: true, followCursor: false, autoBeam: current && (current.kind === "ai" || current.kind === "demo"),
+          autoResize: true, backend: "svg", drawTitle: settings.scoreLayout === "page", drawSubtitle: false, drawComposer: settings.scoreLayout === "page", drawCredits: false,
+          drawPartNames: false, drawFingerings: true, followCursor: false,
+          renderSingleHorizontalStaffline: settings.scoreLayout !== "page", // 한 줄로 흐르는 악보 (악보대에 올린 태블릿에서 보기 좋게) autoBeam: current && (current.kind === "ai" || current.kind === "demo"),
           cursorsOptions: [{ type: 0, color: "#17766b", alpha: 0.35, follow: false }]
         });
         this.osmd = osmd;
         await osmd.load(variants[vi]);
         if (token !== this.token) return;
         osmd.zoom = settings.scoreZoom;
-        osmd.render();
+        osmd.render(); this.fitHeight();
         this.note(vi ? "악보 그림에서 일부 표시(8va 등)를 빼고 그렸어요. 소리와 건반 안내는 원래대로예요." : "");
         this.buildSteps();
         osmd.cursor.show();
@@ -1228,7 +1260,14 @@ const Score = {
   },
   scrollToCursor(force) {
     const el = this.osmd && this.osmd.cursor && this.osmd.cursor.cursorElement; if (!el) return;
-    const sc = $("#scoreScroll"); const top = el.offsetTop, h = el.offsetHeight || 80;
+    const sc = $("#scoreScroll");
+    if (settings.scoreLayout !== "page") {
+      // 한 줄 악보: 커서가 왼쪽에서 3분의 1쯤에 오도록 옆으로 흐르게
+      const left = el.offsetLeft, target = Math.max(0, left - sc.clientWidth * 0.32);
+      if (force || left < sc.scrollLeft + sc.clientWidth * 0.15 || left > sc.scrollLeft + sc.clientWidth * 0.62) sc.scrollTo({ left: target, behavior: force ? "auto" : "smooth" });
+      return;
+    }
+    const top = el.offsetTop, h = el.offsetHeight || 80;
     if (force || top < sc.scrollTop + 10 || top + h > sc.scrollTop + sc.clientHeight - 10) {
       sc.scrollTo({ top: Math.max(0, top - 16), behavior: force ? "auto" : "smooth" });
     }
@@ -1255,7 +1294,19 @@ const Score = {
     for (let i = 0; i < song.measures.length; i++) { const b = this.measureBox(i); if (b && x >= b.x && x <= b.x + b.w && y >= b.y - 20 && y <= b.y + b.h + 20) return i; }
     return -1;
   },
-  setZoom(z) { if (!this.ready) return; try { this.osmd.zoom = z; this.osmd.render(); this.idx = -1; this.sync(true); this.drawShades(); } catch (e) {} }
+  // 한 줄 악보는 악보 높이만큼만 자리를 차지하게 (남는 자리는 피아노에)
+  fitHeight() {
+    const app = $("#app"), host = $("#osmd"); if (settings.scoreLayout === "page") { app.style.removeProperty("--score-line-h"); host.style.marginTop = ""; return; }
+    const svg = $("#osmd svg"); if (!svg) return;
+    try {
+      // 악보 그림 위아래 빈 여백을 빼고, 실제 오선·음표가 있는 높이만큼만
+      const vb = svg.viewBox && svg.viewBox.baseVal, rh = svg.getBoundingClientRect().height, sc = vb && vb.height ? rh / vb.height : 1, bb = svg.getBBox();
+      const top = Math.max(0, bb.y * sc - 6), bottom = (bb.y + bb.height) * sc + 6;
+      host.style.marginTop = -top + "px";
+      if (bottom - top > 40) { app.style.setProperty("--score-line-h", Math.ceil(bottom - top + 4) + "px"); setTimeout(() => window.dispatchEvent(new Event("resize")), 30); }
+    } catch (e) {}
+  },
+  setZoom(z) { if (!this.ready) return; try { this.osmd.zoom = z; this.osmd.render(); this.fitHeight(); this.idx = -1; this.sync(true); this.drawShades(); } catch (e) {} }
 };
 $("#osmd").addEventListener("click", (e) => {
   const host = $("#osmd").getBoundingClientRect();
@@ -1370,15 +1421,20 @@ function drawKeys() {
   }
   const up = upcomingStep(); const upMap = new Map();
   if (up && (settings.mode === "wait" || (up.start - E.pos) < 1.2)) up.notes.forEach((n) => { if (practiceHas(n.hand)) upMap.set(n.midi, n); });
-  const whiteH = H - 4, blackH = whiteH * 0.62;
+  // 건반 바로 위 붉은 펠트 띠 (실제 피아노처럼), 그 아래 건반
+  const F = 6; kctx.fillStyle = "#a1283b"; kctx.fillRect(0, 0, W, F); kctx.fillStyle = "rgba(0,0,0,.35)"; kctx.fillRect(0, F - 1, W, 1);
+  kctx.save(); kctx.translate(0, F);
+  const whiteH = H - 4 - F, blackH = whiteH * 0.62;
+  const ivory = kctx.createLinearGradient(0, 0, 0, whiteH); ivory.addColorStop(0, "#efeadd"); ivory.addColorStop(0.08, "#f8f5ed"); ivory.addColorStop(0.92, "#f4f0e6"); ivory.addColorStop(1, "#ddd6c4");
+  const ebony = kctx.createLinearGradient(0, 0, 0, blackH); ebony.addColorStop(0, "#0e0f12"); ebony.addColorStop(0.85, "#24262c"); ebony.addColorStop(1, "#3a3d45");
   const fam = colors["--f-body"];
   const pressColor = (m) => { const p = pressed.get(m); if (!p) return null; if (p.up && now - p.up > 160) { pressed.delete(m); return null; } return p.state === "ok" ? colors["--ok"] : p.state === "bad" ? colors["--bad"] : "#9fb0c8"; };
   // 흰건반
   kb.whites.forEach((m, i) => {
     const g = keyGeom(m, W);
     const pc = pressColor(m); const a = act.get(m); const u = upMap.get(m);
-    kctx.fillStyle = pc || (a && (settings.mode !== "wait" || !practiceHas(a.hand)) ? handColor(a.hand) : "#f7f7f4");
-    roundRect(kctx, g.x + 1, 0, g.w - 2, whiteH, 5); kctx.fill();
+    kctx.fillStyle = pc || (a && (settings.mode !== "wait" || !practiceHas(a.hand)) ? handColor(a.hand) : ivory);
+    keyShape(kctx, g.x + 1, 0, g.w - 2, whiteH, Math.min(6, g.w / 4)); kctx.fill();
     if (u && !pc) { kctx.strokeStyle = handColor(u.hand); kctx.lineWidth = 3; roundRect(kctx, g.x + 2.5, 1.5, g.w - 5, whiteH - 3, 5); kctx.stroke(); kctx.fillStyle = handColor(u.hand); kctx.globalAlpha = 0.22; roundRect(kctx, g.x + 2.5, 1.5, g.w - 5, whiteH - 3, 5); kctx.fill(); kctx.globalAlpha = 1; }
     if (m === 60) { kctx.fillStyle = "#c7cbd3"; kctx.beginPath(); kctx.arc(g.x + g.w / 2, whiteH - 34, 2.5, 0, 7); kctx.fill(); }
     if (settings.labels !== "off" && g.w > 13) {
@@ -1391,20 +1447,23 @@ function drawKeys() {
   for (let m = kb.lo; m <= kb.hi; m++) {
     if (!isBlack(m)) continue; const g = keyGeom(m, W);
     const pc = pressColor(m); const a = act.get(m); const u = upMap.get(m);
-    kctx.fillStyle = pc || (a && (settings.mode !== "wait" || !practiceHas(a.hand)) ? handColor(a.hand) : "#1d222c");
-    roundRect(kctx, g.x, 0, g.w, blackH, 3); kctx.fill();
+    kctx.fillStyle = pc || (a && (settings.mode !== "wait" || !practiceHas(a.hand)) ? handColor(a.hand) : ebony);
+    keyShape(kctx, g.x, 0, g.w, blackH, Math.min(3, g.w / 4)); kctx.fill();
+    if (!pc && !a) { kctx.fillStyle = "rgba(255,255,255,.13)"; kctx.fillRect(g.x + 2, blackH * 0.86, g.w - 4, Math.max(2, blackH * 0.06)); } // 검은건반 앞면 빛
     if (u && !pc) { kctx.strokeStyle = handColor(u.hand); kctx.lineWidth = 3; roundRect(kctx, g.x + 1.5, 1.5, g.w - 3, blackH - 3, 3); kctx.stroke(); }
     if (u && settings.labels !== "off" && g.w > 9) { kctx.fillStyle = "#fff"; kctx.textAlign = "center"; kctx.font = `600 ${Math.min(11, g.w * 0.5)}px ${fam}`; kctx.fillText(noteName(m, settings.labels), g.x + g.w / 2, blackH - 8); }
     if (u && settings.fingers && u.finger) badge(kctx, g.x + g.w / 2, blackH + 14, String(u.finger), handColor(u.hand), fam);
   }
-  kctx.textAlign = "left";
+  kctx.textAlign = "left"; kctx.restore();
 }
+// 건반 모양: 위는 펠트 밑으로 들어가 각지고, 아래만 둥글게
+function keyShape(ctx, x, y, w, h, r) { ctx.beginPath(); if (!(w > 0 && h > 0)) return; r = Math.max(0, Math.min(r, w / 2, h / 2)); ctx.moveTo(x, y); ctx.lineTo(x + w, y); ctx.lineTo(x + w, y + h - r); ctx.arcTo(x + w, y + h, x + w - r, y + h, r); ctx.lineTo(x + r, y + h); ctx.arcTo(x, y + h, x, y + h - r, r); ctx.closePath(); }
 function badge(ctx, x, y, t, col, fam) { ctx.fillStyle = col; ctx.beginPath(); ctx.arc(x, y, 9, 0, 7); ctx.fill(); ctx.fillStyle = "#0b0f17"; ctx.textAlign = "center"; ctx.font = `700 11px ${fam}`; ctx.fillText(t, x, y + 4); }
 
 // 건반 터치/클릭 입력
 const ptrNotes = new Map();
 function keyFromPoint(x, y) {
-  const r = keysC.getBoundingClientRect(); const W = r.width, H = r.height; const lx = x - r.left, ly = y - r.top; const blackH = (H - 4) * 0.62;
+  const r = keysC.getBoundingClientRect(); const W = r.width, H = r.height; const lx = x - r.left, ly = y - r.top - 6; const blackH = (H - 10) * 0.62; // 6 = 펠트 띠
   if (ly < blackH) for (let m = kb.lo; m <= kb.hi; m++) { if (!isBlack(m)) continue; const g = keyGeom(m, W); if (lx >= g.x && lx <= g.x + g.w) return m; }
   const i = Math.floor(lx / (W / kb.whites.length)); return kb.whites[clamp(i, 0, kb.whites.length - 1)];
 }
@@ -1470,10 +1529,17 @@ function updatePrompt() {
 }
 function updateStats() { $("#stAcc").textContent = accText(); $("#stMiss").textContent = E.mistakes; $("#stLoops").textContent = E.loops; }
 function setRate(r) { settings.rate = clamp(r, 0.25, 1.5); $("#speed").value = Math.round(settings.rate * 100); const bpm = song ? Math.round(song.baseBpm * settings.rate) : ""; $("#speedReadout").innerHTML = `<b>${Math.round(settings.rate * 100)}%</b>${bpm ? " · ♩=" + bpm : ""}`; saveSettings(); }
+// 따라치기인데 들을 수단(마이크·전자피아노)이 없으면 화면에 바로 켤 수 있는 안내를 띄운다
+function updateInputHint() {
+  const el = $("#inputHint"); if (!el) return;
+  const midiOn = !!(midiAccess && [...midiAccess.inputs.values()].length);
+  const show = settings.mode === "wait" && !Mic.on && !midiOn && !Input.hintDismissed && !!song;
+  el.hidden = !show;
+}
 function setMode(m) {
   settings.mode = m; $$("[data-mode]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.mode === m)));
   $("#modeHelp").textContent = m === "wait" ? "따라치기: 맞는 건반을 누를 때까지 음악이 기다려 줘요. 화면 건반, PC 키보드, 전자피아노로 칠 수 있어요." : "듣기: 곡을 들으며 어떤 건반을 누르는지 봐요.";
-  E.waitIdx = lowerBound(song ? song.steps : [], E.pos); E.hits.clear(); E.waiting = false; saveSettings();
+  E.waitIdx = lowerBound(song ? song.steps : [], E.pos); E.hits.clear(); E.waiting = false; saveSettings(); updateInputHint();
 }
 function setHands(h) { settings.hands = h; $$("[data-hands]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.hands === h))); if (song) { E.waitIdx = lowerBound(song.steps, E.pos); E.hits.clear(); E.waiting = false; } saveSettings(); }
 function setLoop(on) {
@@ -1509,6 +1575,22 @@ $("#metroBtn").onclick = () => { settings.metro = !settings.metro; $("#metroBtn"
 const bindSwitch = (id, key, after) => { const el = $("#" + id); el.checked = !!settings[key]; el.onchange = () => { settings[key] = el.checked; saveSettings(); after && after(); }; };
 bindSwitch("autoSpeed", "autoSpeed"); bindSwitch("micChord", "micChord", () => { if (Mic.on) { Mic.stop(); Mic.start(); } }); bindSwitch("chordLoose", "chordLoose", () => { E.hits.clear(); toast(settings.chordLoose ? "화음을 한 음씩 쳐도 맞는 걸로 쳐요" : "화음은 함께(0.2초 안에) 쳐야 맞아요"); }); bindSwitch("steadyTempo", "steadyTempo", () => rebuildTiming()); bindSwitch("expandRepeats", "expandRepeats", () => { rebuildTiming(); renderFlags(); toast(settings.expandRepeats ? "도돌이표대로 반복해서 연주해요" : "도돌이표를 무시하고 처음부터 끝까지 한 번만 연주해요"); }); bindSwitch("accomp", "accomp"); bindSwitch("guide", "guide"); bindSwitch("countIn", "countIn"); bindSwitch("inputSound", "inputSound"); bindSwitch("fingers", "fingers");
 $("#volume").value = Math.round(settings.volume * 100); $("#volume").oninput = (e) => { settings.volume = e.target.value / 100; Sound.setVolume(settings.volume); saveSettings(); };
+function applyScoreLayout() { $("#app").classList.toggle("score-line", settings.scoreLayout !== "page"); }
+applyScoreLayout();
+$("#scoreLayoutSel").value = settings.scoreLayout === "page" ? "page" : "line";
+$("#scoreLayoutSel").onchange = (e) => { settings.scoreLayout = e.target.value; saveSettings(); applyScoreLayout(); if (current && current.xml) Score.show(current.xml); };
+// 전체 화면 (아이패드 사파리는 webkit 접두사)
+const fsEl = document.documentElement;
+const fsOn = () => !!(document.fullscreenElement || document.webkitFullscreenElement);
+function toggleFullscreen() {
+  try {
+    if (fsOn()) (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+    else (fsEl.requestFullscreen || fsEl.webkitRequestFullscreen).call(fsEl);
+  } catch (e) { toast("이 기기는 전체 화면을 지원하지 않아요. 사파리 공유 → 홈 화면에 추가로 앱처럼 쓸 수 있어요."); }
+}
+if (!(fsEl.requestFullscreen || fsEl.webkitRequestFullscreen)) $("#fsBtn").hidden = true;
+$("#fsBtn").onclick = toggleFullscreen;
+["fullscreenchange", "webkitfullscreenchange"].forEach((ev) => document.addEventListener(ev, () => { $("#fsBtn").setAttribute("aria-pressed", String(fsOn())); setTimeout(() => window.dispatchEvent(new Event("resize")), 60); }));
 $("#viewSel").value = settings.view; $("#viewSel").onchange = (e) => { settings.view = e.target.value; applyView(); saveSettings(); };
 $("#labelSel").value = settings.labels; $("#labelSel").onchange = (e) => { settings.labels = e.target.value; saveSettings(); };
 $("#rangeSel").value = settings.range; $("#rangeSel").onchange = (e) => { settings.range = e.target.value; computeRange(); saveSettings(); };
@@ -1520,6 +1602,9 @@ $("#soundSub").textContent = soundSubText[settings.soundSet || "sal"];
 $("#soundSel").onchange = async (e) => { const v = e.target.value; $("#soundSub").textContent = "불러오는 중…"; await Sound.setSet(v); $("#soundSub").textContent = soundSubText[v]; Sound.ensure(); Sound.note(60, 0.6, 0.6); Sound.note(64, 0.5, 0.6); Sound.note(67, 0.5, 0.6); };
 $("#midiBtn").onclick = connectMIDI;
 $("#micBtn").onclick = () => Mic.on ? Mic.stop() : Mic.start();
+$("#micQuick").onclick = () => Mic.on ? Mic.stop() : Mic.start();
+$("#hintMic").onclick = () => Mic.start();
+$("#hintClose").onclick = () => { Input.hintDismissed = true; updateInputHint(); };
 // 넓은 화면에서 오른쪽 연습 설정을 접고 펴기 (건반·악보에 집중). 상태는 기억한다.
 function setSideCollapsed(c, quiet) {
   settings.sideCollapsed = !!c; saveSettings();
@@ -1919,7 +2004,7 @@ $("#diagBtn").onclick = async () => {
   // 악보 내용(음표)은 넣지 않는다: 위치 기록, 설정, 곡 크기만
   const info = { build: (document.querySelector('meta[name="gunban-build"]') || {}).content || "local", kind: current && current.kind, measures: song ? song.measures.length : 0,
     steps: song ? song.steps.length : 0, cursorSteps: Score.steps.length, settings: { mode: settings.mode, hands: settings.hands, loopOn: settings.loopOn, loopA: settings.loopA, loopB: settings.loopB, rate: settings.rate },
-    unexpected: PosLog.unexpected().length, input: { latencyMs: Input.latency(), mic: Mic.on ? Mic.mode : "off" }, log: PosLog.list.slice(-80) };
+    unexpected: PosLog.unexpected().length, input: { latencyMs: Input.latency(), mic: Mic.on ? Mic.mode : "off", micStats: Mic.on ? Mic.stats : null, sr: Sound.ctx && Sound.ctx.sampleRate, ua: navigator.userAgent.slice(0, 120) }, log: PosLog.list.slice(-80) };
   const txt = JSON.stringify(info);
   try { await navigator.clipboard.writeText(txt); toast(`진단 기록을 복사했어요 (이유 없는 역행 ${info.unexpected}번)`); }
   catch (e) { console.log(txt); toast("복사하지 못했어요. 개발자 도구 콘솔에 출력했어요."); }

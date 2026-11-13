@@ -1,0 +1,33 @@
+name: webkit
+# 사파리 엔진(WebKit)으로 아이패드 크기에서 앱·마이크 경로를 시험한다. 배포를 막지 않는 참고용 시험.
+on:
+  push:
+    paths: ["src/**", "tests/webkit_smoke.js", ".github/workflows/webkit.yml"]
+  pull_request:
+    paths: ["src/**", "tests/webkit_smoke.js", ".github/workflows/webkit.yml"]
+  workflow_dispatch:
+jobs:
+  webkit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: python build.py
+      - name: WebKit 설치
+        run: |
+          npm install --no-save playwright@1.48.2
+          npx playwright install --with-deps webkit
+      - name: 악보 그림 도구 받기
+        run: |
+          mkdir -p tests/.cache
+          curl -fsSL -o tests/.cache/osmd-1.8.9.min.js https://github.com/opensheetmusicdisplay/opensheetmusicdisplay/releases/download/1.8.9/opensheetmusicdisplay.min.js || true
+      - name: 사파리 엔진 시험
+        run: |
+          set +e; node tests/webkit_smoke.js > /tmp/wk.txt 2>&1; c=$?; set -e; cat /tmp/wk.txt
+          while IFS= read -r l; do echo "::notice::${l:0:300}"; done < /tmp/wk.txt
+          exit $c

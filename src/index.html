@@ -1,8 +1,13 @@
 <title>건반 내비</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="건반 내비">
+<meta name="theme-color" content="#101114">
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gowun+Batang:wght@700&family=IBM+Plex+Mono:wght@500&family=IBM+Plex+Sans+KR:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gowun+Batang:wght@700&family=IBM+Plex+Sans+KR:wght@400;500;600&display=swap">
 <style>
 /* @@STYLE: src/styles.css 가 여기에 들어감 */
 </style>
@@ -20,15 +25,15 @@
     </div>
     <div class="top-actions">
       <button class="btn primary" id="openBtn" type="button" title="MusicXML, MXL, MIDI, PDF, 사진"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg><span>악보 올리기</span></button>
-      <button class="btn" id="demoBtn" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 18V5l11-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/></svg><span>예제 곡</span></button>
-      <button class="btn" id="saveXmlBtn" type="button" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v12M7 11l5 5 5-5"/><path d="M4 20h16"/></svg><span>MusicXML 저장</span></button>
+      <button class="btn secondary" id="demoBtn" type="button" aria-label="예제 곡"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 18V5l11-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/></svg><span>예제 곡</span></button>
+      <button class="btn secondary" id="saveXmlBtn" type="button" hidden aria-label="MusicXML 저장"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v12M7 11l5 5 5-5"/><path d="M4 20h16"/></svg><span>MusicXML 저장</span></button>
       <a class="btn" id="webLink" href="https://luckydodo777.github.io/curly-octo-sniffle/" target="_blank" rel="noopener" hidden title="구글 로그인·내 악보함은 웹 버전에서 쓸 수 있어요"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6"/><path d="M20 4l-9 9"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg><span>로그인해서 쓰기</span></a>
       <span id="accountBox" class="account" hidden>
-        <button class="btn" id="loginBtn" type="button" title="구글 계정으로 로그인하면 올린 악보와 연습 기록이 계정에 저장돼요"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#4285F4" d="M21.6 12.2c0-.7-.1-1.4-.2-2H12v3.8h5.4a4.6 4.6 0 0 1-2 3v2.5h3.2c1.9-1.7 3-4.3 3-7.3z"/><path fill="#34A853" d="M12 22c2.7 0 5-.9 6.6-2.4l-3.2-2.5c-.9.6-2 1-3.4 1-2.6 0-4.8-1.8-5.6-4.1H3.1v2.6A10 10 0 0 0 12 22z"/><path fill="#FBBC05" d="M6.4 14c-.2-.6-.3-1.3-.3-2s.1-1.4.3-2V7.4H3.1a10 10 0 0 0 0 9.2L6.4 14z"/><path fill="#EA4335" d="M12 5.9c1.5 0 2.8.5 3.8 1.5l2.9-2.9A10 10 0 0 0 3.1 7.4L6.4 10c.8-2.3 3-4.1 5.6-4.1z"/></svg><span>구글로 로그인</span></button>
-        <button class="btn" id="libBtn" type="button" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19V5a2 2 0 0 1 2-2h12v18H6a2 2 0 0 1-2-2z"/><path d="M8 7h6M8 11h6"/></svg><span>내 악보함 <small id="libBtnName"></small></span></button>
+        <button class="btn secondary" id="loginBtn" type="button" aria-label="구글로 로그인" title="구글 계정으로 로그인하면 올린 악보와 연습 기록이 계정에 저장돼요"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#4285F4" d="M21.6 12.2c0-.7-.1-1.4-.2-2H12v3.8h5.4a4.6 4.6 0 0 1-2 3v2.5h3.2c1.9-1.7 3-4.3 3-7.3z"/><path fill="#34A853" d="M12 22c2.7 0 5-.9 6.6-2.4l-3.2-2.5c-.9.6-2 1-3.4 1-2.6 0-4.8-1.8-5.6-4.1H3.1v2.6A10 10 0 0 0 12 22z"/><path fill="#FBBC05" d="M6.4 14c-.2-.6-.3-1.3-.3-2s.1-1.4.3-2V7.4H3.1a10 10 0 0 0 0 9.2L6.4 14z"/><path fill="#EA4335" d="M12 5.9c1.5 0 2.8.5 3.8 1.5l2.9-2.9A10 10 0 0 0 3.1 7.4L6.4 10c.8-2.3 3-4.1 5.6-4.1z"/></svg><span>구글로 로그인</span></button>
+        <button class="btn secondary" id="libBtn" type="button" hidden aria-label="내 악보함"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19V5a2 2 0 0 1 2-2h12v18H6a2 2 0 0 1-2-2z"/><path d="M8 7h6M8 11h6"/></svg><span>내 악보함 <small id="libBtnName"></small></span></button>
       </span>
       <button class="btn only-desktop" id="sideToggle" type="button" aria-controls="side" aria-expanded="true" title="오른쪽 연습 설정을 접어 건반·악보를 넓게 봐요 (단축키 \)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/><path id="sideToggleArrow" d="M10 10l2 2-2 2"/></svg><span id="sideToggleText">설정 접기</span></button>
-      <button class="btn only-mobile" id="panelBtn" type="button" aria-controls="side"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg><span>설정</span></button>
+      <button class="btn only-mobile" id="panelBtn" type="button" aria-controls="side"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg><span>연습 설정</span></button>
       <input type="file" id="fileInput" hidden accept=".musicxml,.xml,.mxl,.mid,.midi,.pdf,image/*,application/vnd.recordare.musicxml+xml,audio/midi">
     </div>
   </header>
@@ -51,6 +56,12 @@
       <canvas id="fall" aria-label="떨어지는 음표. 위아래로 끌어서 위치를 옮길 수 있어요"></canvas>
       <canvas id="keys" aria-label="피아노 건반. 눌러서 연주할 수 있어요"></canvas>
       <div class="hint-keys" id="hintKeys">PC 키보드: A~K = 도~도 · Z/X 옥타브 · Space 재생</div>
+      <div class="heard" id="heard" role="status" hidden></div>
+      <div class="input-hint" id="inputHint" hidden>
+        <b>실제 피아노로 따라치려면 마이크를 켜 주세요</b>
+        <p>기기를 악보대에 올려 두고 마이크를 켜면, 피아노 소리를 듣고 맞게 치면 다음 음으로 넘어가요. 전자피아노는 설정 → 입력 장치에서 연결할 수 있어요. 화면 건반을 눌러도 돼요.</p>
+        <div class="acts"><button class="btn primary" id="hintMic" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg><span>마이크 켜기</span></button><button class="btn" id="hintClose" type="button">나중에</button></div>
+      </div>
       <div class="prompt" id="prompt" hidden></div>
       <div class="countdown" id="countdown" hidden></div>
       <div class="toast" id="toast" hidden></div>
@@ -81,8 +92,12 @@
       <button type="button" data-hands="R" aria-pressed="false">오른손</button>
       <button type="button" data-hands="L" aria-pressed="false">왼손</button>
     </div>
+    <div class="bar-end">
+    <button class="icon-btn" id="micQuick" type="button" title="마이크로 실제 피아노 소리 듣기" aria-label="마이크" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>
     <button class="icon-btn" id="loopBtn" type="button" title="구간 반복 (L)" aria-label="구간 반복" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 2l3 3-3 3"/><path d="M4 11V9a4 4 0 0 1 4-4h12"/><path d="M7 22l-3-3 3-3"/><path d="M20 13v2a4 4 0 0 1-4 4H4"/></svg></button>
     <button class="icon-btn" id="metroBtn" type="button" title="메트로놈 (M)" aria-label="메트로놈" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6l4 18H5z"/><path d="M12 16l5-9"/></svg></button>
+    <button class="icon-btn" id="fsBtn" type="button" title="전체 화면" aria-label="전체 화면" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+    </div>
   </nav>
 
   <aside class="side" id="side" aria-label="설정">
@@ -134,6 +149,8 @@
       <h3>보기</h3>
       <div class="row"><span>화면</span>
         <select id="viewSel" aria-label="화면 구성"><option value="all">악보 + 건반</option><option value="keys">건반만 크게</option><option value="score">악보 + 건반(노트 없이)</option></select></div>
+      <div class="row"><span>악보 보기<div class="sub">한 줄로 흐르게 하면 악보가 옆으로 지나가요</div></span>
+        <select id="scoreLayoutSel" aria-label="악보 보기"><option value="line">한 줄로 흐르게</option><option value="page">여러 줄 (페이지)</option></select></div>
       <div class="row"><span>음 이름</span>
         <select id="labelSel" aria-label="음 이름 표시"><option value="sol">도레미</option><option value="abc">C D E</option><option value="off">끄기</option></select></div>
       <div class="row"><label for="fingers">손가락 번호 (악보에 있으면)</label><span class="switch"><input type="checkbox" id="fingers" checked></span></div>
