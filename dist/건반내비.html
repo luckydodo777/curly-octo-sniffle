@@ -1573,19 +1573,23 @@ const Mic = {
     this.watchdog();
   },
   // 소리 받기 연결: 마이크 → (워클릿 또는 주기적으로 읽기) → 분석기(워커 또는 화면 쪽)
-  async attach(ctx, useWorklet) {
+  async attach(ctx, useWorklet, useWorker = true) {
     this.detach();
     const sr = ctx.sampleRate, src = ctx.createMediaStreamSource(this.stream); this.src = src;
     const onEvents = (evs, capturedAt) => evs.forEach((e) => this.handle(e, capturedAt));
+    // 분석기: 워커 → 워커가 안 뜨면(오류 이벤트 포함) 화면 쪽에서
     let feed = null;
+    const mainFeed = () => { const A = createMicAnalyzer(sr, { poly: !!settings.micChord }); return (b, t) => onEvents(A.feed(b, t), performance.now()); };
     try {
+      if (!useWorker) throw new Error("main");
       const code = `${createMicAnalyzer.toString()}\nlet A=null;onmessage=(m)=>{const d=m.data;if(d.init){A=createMicAnalyzer(d.sr,d.opt);return;}const at=d.at;postMessage({ev:A.feed(d.b,d.t),at});};`;
-      this.worker = new Worker(URL.createObjectURL(new Blob([code], { type: "text/javascript" })));
-      this.worker.postMessage({ init: true, sr, opt: { poly: !!settings.micChord } });
-      this.worker.onmessage = (m) => onEvents(m.data.ev, m.data.at);
-      feed = (b, t) => this.worker.postMessage({ b, t, at: performance.now() }, [b.buffer]);
+      const w = new Worker(URL.createObjectURL(new Blob([code], { type: "text/javascript" }))); this.worker = w;
+      w.postMessage({ init: true, sr, opt: { poly: !!settings.micChord } });
+      w.onmessage = (m) => onEvents(m.data.ev, m.data.at);
+      w.onerror = (ev) => { if (this.worker !== w) return; this.workerError = String(ev && ev.message || "worker error").slice(0, 100); w.terminate(); this.worker = null; feed = mainFeed(); this.mode = this.mode.replace("worker", "main"); };
+      feed = (b, t) => w.postMessage({ b, t, at: performance.now() }, [b.buffer]);
       this.mode = "worker";
-    } catch (e) { const A = createMicAnalyzer(sr, { poly: !!settings.micChord }); feed = (b, t) => onEvents(A.feed(b, t), performance.now()); this.mode = "main"; }
+    } catch (e) { feed = mainFeed(); this.mode = "main"; }
     // 소리 없는 출력으로 이어 둬야 사파리가 노드를 돌린다
     const mute = ctx.createGain(); mute.gain.value = 0; mute.connect(ctx.destination); this.mute = mute;
     try {
@@ -1617,11 +1621,12 @@ const Mic = {
       if (!this.on) return;
       const st = this.stats, ctx = this.ownCtx || Sound.ctx;
       if (ctx.state !== "running") { try { await ctx.resume(); } catch (e) {} }
-      if (st.blocks === 0 && !this.fixes.includes("poll")) { this.fixes.push("poll"); await this.attach(ctx, false); this.watchdog(); return; }
+      if (st.blocks === 0 && this.worker && !this.fixes.includes("main")) { this.fixes.push("main"); await this.attach(ctx, true, false); this.watchdog(); return; }
+      if (st.blocks === 0 && !this.fixes.includes("poll")) { this.fixes.push("poll"); await this.attach(ctx, false, false); this.watchdog(); return; }
       if (st.blocks > 0 && st.maxLevel === 0 && !this.fixes.includes("ownctx")) {
         // 소리가 완전히 0이면(장치와 샘플레이트가 안 맞는 경우 등) 마이크 전용 오디오를 새로 만든다
         this.fixes.push("ownctx");
-        try { const AC = window.AudioContext || window.webkitAudioContext; this.ownCtx = new AC(); await this.ownCtx.resume().catch(() => {}); await this.attach(this.ownCtx, true); this.watchdog(); } catch (e) { this.lastError = "ownctx: " + String(e && e.message || e).slice(0, 80); }
+        try { const AC = window.AudioContext || window.webkitAudioContext; this.ownCtx = new AC(); await this.ownCtx.resume().catch(() => {}); await this.attach(this.ownCtx, true, !this.fixes.includes("main")); this.watchdog(); } catch (e) { this.lastError = "ownctx: " + String(e && e.message || e).slice(0, 80); }
         return;
       }
       if (st.blocks === 0 || st.maxLevel === 0) this.status("마이크 소리가 들어오지 않아요. 마이크를 껐다 켜 보고, 그래도 안 되면 설정 맨 아래 '진단 복사'를 눌러 보내 주세요.", true);
@@ -2533,7 +2538,7 @@ $("#diagBtn").onclick = async () => {
   // 악보 내용(음표)은 넣지 않는다: 위치 기록, 설정, 곡 크기만
   const info = { build: (document.querySelector('meta[name="gunban-build"]') || {}).content || "local", kind: current && current.kind, measures: song ? song.measures.length : 0,
     steps: song ? song.steps.length : 0, cursorSteps: Score.steps.length, settings: { mode: settings.mode, hands: settings.hands, loopOn: settings.loopOn, loopA: settings.loopA, loopB: settings.loopB, rate: settings.rate },
-    unexpected: PosLog.unexpected().length, input: { latencyMs: Input.latency(), mic: Mic.on ? Mic.mode : "off", micStats: Mic.on ? Mic.stats : null, micError: Mic.lastError || null, micFixes: Mic.fixes || [], micWorklet: Mic.workletError || null, ctxState: Sound.ctx && Sound.ctx.state, sr: Sound.ctx && Sound.ctx.sampleRate, ua: navigator.userAgent.slice(0, 120) }, log: PosLog.list.slice(-80) };
+    unexpected: PosLog.unexpected().length, input: { latencyMs: Input.latency(), mic: Mic.on ? Mic.mode : "off", micStats: Mic.on ? Mic.stats : null, micError: Mic.lastError || null, micFixes: Mic.fixes || [], micWorklet: Mic.workletError || null, micWorker: Mic.workerError || null, ctxState: Sound.ctx && Sound.ctx.state, sr: Sound.ctx && Sound.ctx.sampleRate, ua: navigator.userAgent.slice(0, 120) }, log: PosLog.list.slice(-80) };
   const txt = JSON.stringify(info);
   try { await navigator.clipboard.writeText(txt); toast(`진단 기록을 복사했어요 (이유 없는 역행 ${info.unexpected}번)`); }
   catch (e) { console.log(txt); toast("복사하지 못했어요. 개발자 도구 콘솔에 출력했어요."); }
