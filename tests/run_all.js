@@ -10,7 +10,7 @@ const OSMD_LOCAL = process.env.OSMD_JS || path.resolve(__dirname, '.cache', 'osm
 let failed = 0; const ok = (name, cond, info) => { console.log(`${cond ? 'PASS' : 'FAIL'}  ${name}${info ? '  ' + info : ''}`); if (!cond) failed++; };
 
 async function openPage(browser, opts = {}) {
-  const p = await browser.newPage({ viewport: opts.viewport || { width: 1300, height: 850 } });
+  const p = await browser.newPage({ viewport: opts.viewport || { width: 1300, height: 850 }, hasTouch: !!opts.touch });
   const errs = []; p.on('pageerror', (e) => errs.push(e.message));
   if (opts.mockAI) await p.addInitScript(opts.mockAI);
   await p.route('**/*', (r) => {
@@ -669,6 +669,57 @@ async function openPage(browser, opts = {}) {
     ok('악보 커서가 연주 위치 마디와 일치 (못갖춘마디·박자 넘침·도돌이표 펼침·꾸밈음)', r.ready && r.bad.length === 0 && r.unexpected === 0 && r.steps === 21 && r.cursorSteps === 14 && r.repeats === 1, JSON.stringify(r));
     ok('페이지 오류 없음 (악보 그림)', errs.length === 0, errs.join(' | ')); await p.close();
   } else console.log('SKIP  악보 커서 시험 (tests/.cache/osmd-1.8.9.min.js 없음)');
+
+  // 20) 악보 계이름(음표 아래, 기본으로 켜짐)과 음표 터치 → 칠 건반 알려 주기 (OSMD 1.8.9 필요)
+  if (fs.existsSync(OSMD_LOCAL)) {
+    const { p, errs } = await openPage(browser, { osmd: true, touch: true, viewport: { width: 1180, height: 820 } });
+    const demo = await p.evaluate(async () => {
+      const G = GunbanNavi; G.Input.hintDismissed = true; const svg = () => document.querySelector('#osmd svg');
+      const names = () => [...document.querySelectorAll('#osmd .gn-name')];
+      const tre = Score.gnotes.filter((n) => n.si === 0 && n.ly != null), bas = Score.gnotes.filter((n) => n.si === 1 && n.ly != null);
+      const bassTop = Math.min(...bas.map((n) => n.top));
+      const out = { def: G.settings.scoreNames, n: names().length, first: names().slice(0, 4).map((t) => t.textContent), cls: [names()[0].classList.contains('r'), names().find((t) => t.classList.contains('l')).textContent],
+        below: Score.gnotes.every((n) => n.ly == null || n.ly > n.y), gap: Math.max(...tre.map((n) => n.ly)) < bassTop - 0.3, inView: names().every((t) => { const r = t.getBoundingClientRect(), s = svg().getBoundingClientRect(); return r.bottom <= s.bottom + 1 && r.top >= s.top - 1; }) };
+      document.querySelector('#labelSel').value = 'abc'; document.querySelector('#labelSel').onchange({ target: document.querySelector('#labelSel') }); out.abc = names()[0].textContent;
+      document.querySelector('#labelSel').value = 'sol'; document.querySelector('#labelSel').onchange({ target: document.querySelector('#labelSel') });
+      document.querySelector('#scoreNames').click(); await new Promise((r) => setTimeout(r, 300)); out.off = [G.settings.scoreNames, names().length];
+      document.querySelector('#scoreNames').click(); await new Promise((r) => setTimeout(r, 300)); out.on = names().length;
+      return out;
+    });
+    ok('악보 계이름: 기본으로 켜짐, 음표 아래에 오른손·왼손 색으로 (미 미 파 솔 / 도), 두 오선 사이에 들어감, 그림 밖으로 안 잘림', demo.def && demo.n > 60 && demo.first.join() === '미,미,파,솔' && demo.cls[0] && demo.cls[1] === '도' && demo.below && demo.gap && demo.inView, JSON.stringify(demo));
+    ok('악보 계이름: 음 이름 설정(C D E)을 따르고, 설정에서 끄고 켤 수 있음', demo.abc === 'E' && demo.off[0] === false && demo.off[1] === 0 && demo.on === demo.n, JSON.stringify([demo.abc, demo.off, demo.on]));
+    const r = await p.evaluate(async () => {
+      const P = (st, oct, alt) => `<pitch><step>${st}</step>${alt ? `<alter>${alt}</alter>` : ''}<octave>${oct}</octave></pitch>`;
+      const N = (st, oct, { alt, dur = 1, voice = 1, staff = 1, chord, type = 'quarter', acc, tie, fing } = {}) => `<note>${chord ? '<chord/>' : ''}${P(st, oct, alt)}<duration>${dur}</duration>${tie ? `<tie type="${tie}"/>` : ''}<voice>${voice}</voice><type>${type}</type>${acc ? `<accidental>${acc}</accidental>` : ''}<staff>${staff}</staff>${tie || fing ? `<notations>${tie ? `<tied type="${tie}"/>` : ''}${fing ? `<technical><fingering>${fing}</fingering></technical>` : ''}</notations>` : ''}</note>`;
+      const bk = (d) => `<backup><duration>${d}</duration></backup>`;
+      const xml = `<?xml version="1.0"?><score-partwise><part-list><score-part id="P1"><part-name>P</part-name></score-part></part-list><part id="P1">
+        <measure number="1"><attributes><divisions>1</divisions><key><fifths>-1</fifths></key><time><beats>4</beats><beat-type>4</beat-type></time><staves>2</staves><clef number="1"><sign>G</sign><line>2</line></clef><clef number="2"><sign>F</sign><line>4</line></clef></attributes>
+          ${N('C', 4, { fing: 1 })}${N('E', 4, { chord: 1 })}${N('G', 4, { chord: 1 })}${N('F', 4, { alt: 1, acc: 'sharp', fing: 3 })}${N('B', 4, { alt: -1, fing: 4 })}${N('D', 5, { tie: 'start' })}${bk(4)}${N('C', 3, { staff: 2, voice: 5, dur: 2, type: 'half' })}${N('G', 3, { staff: 2, voice: 5, dur: 2, type: 'half', chord: 1 })}${N('F', 2, { staff: 2, voice: 5, dur: 2, type: 'half' })}</measure>
+        <measure number="2">${N('D', 5, { tie: 'stop' })}${N('C', 5, { alt: 1, acc: 'sharp' })}${N('D', 5, { dur: 2, type: 'half' })}${bk(4)}${N('B', 2, { staff: 2, voice: 5, dur: 4, type: 'whole', alt: -1 })}${N('D', 3, { staff: 2, voice: 5, dur: 4, type: 'whole', chord: 1 })}${N('F', 3, { staff: 2, voice: 5, dur: 4, type: 'whole', chord: 1 })}</measure>
+      </part></score-partwise>`;
+      const raw = parseMusicXML(xml, { fit: true }); setSong(raw, { kind: 'musicxml', xml, name: '시험', persist: false });
+      for (let i = 0; i < 60 && !Score.ready; i++) await new Promise((r) => setTimeout(r, 100));
+      await new Promise((r) => setTimeout(r, 300));
+      const scr = (ux, uy) => { const svg = document.querySelector('#osmd svg'); const rc = svg.getBoundingClientRect(), vb = svg.viewBox.baseVal; const ppu = rc.width / vb.width * 10; return { x: rc.left + (ux - vb.x / 10) * ppu, y: rc.top + (uy - vb.y / 10) * ppu }; };
+      const g = (m) => Score.gnotes.find((n) => n.midi === m && !n.tie);
+      const c4 = g(60), fs4 = g(66), m2 = Score.measureBox(1);
+      const host = document.querySelector('#osmd').getBoundingClientRect();
+      return { names: [...document.querySelectorAll('#osmd .gn-name')].map((t) => t.textContent + (t.classList.contains('l') ? 'L' : 'R')), tieMarked: Score.gnotes.filter((n) => n.tie).length,
+        fs4: scr(fs4.x, fs4.y), c4label: scr(c4.lx, c4.ly - 0.5), blank: { x: host.left + m2.x + m2.w * 0.85, y: host.top + m2.y + m2.h * 0.5 }, mStart: GunbanNavi.song.measures[1].start };
+    });
+    ok('계이름은 악보에 쓰인 대로: 조표의 ♭(시♭), 임시표(파♯·도♯), 화음은 높은 음부터, 붙임줄 뒷음은 생략', r.names.join() === '솔R,미R,도R,파♯R,시♭R,레R,솔L,도L,파L,도♯R,레R,파L,레L,시♭L' && r.tieMarked === 1, JSON.stringify(r.names));
+    const tap = async (pt) => { await p.touchscreen.tap(pt.x, pt.y); await p.waitForTimeout(250); return p.evaluate(() => ({ peek: GunbanNavi.peekNow(), toast: (document.querySelector('#toast') || {}).textContent || '', ping: !!document.querySelector('#osmd .gn-ping'), pos: GunbanNavi.E.pos })); };
+    const t1 = await tap(r.fs4);
+    ok('악보의 음표를 누르면 칠 건반을 알려 줌 (파♯ · 오른손 3번 손가락), 연주 위치는 그대로', t1.peek && t1.peek.midi === 66 && t1.peek.hand === 'R' && /파♯ · 오른손 3번 손가락/.test(t1.toast) && t1.ping && t1.pos === 0, JSON.stringify(t1));
+    const t2 = await tap(r.c4label);
+    ok('음표 아래 계이름을 눌러도 그 음 (화음 중 도)', t2.peek && t2.peek.midi === 60 && t2.peek.finger === 1, JSON.stringify(t2.peek));
+    const t3 = await tap(r.blank);
+    ok('음표가 없는 곳을 누르면 예전처럼 그 마디로 이동', Math.abs(t3.pos - r.mStart) < 1e-6, JSON.stringify([t3.pos, r.mStart]));
+    // 마디 상자: 반복 구간(루프)을 걸면 악보에 그 마디 상자가 실제 위치에 그려짐 (예전엔 위치가 NaN)
+    const shade = await p.evaluate(async () => { setLoopRange(1, 1); Score.drawShades(); const d = document.querySelector('.loop-shade'); const b = Score.measureBox(0); return { box: b && [b.x, b.y, b.w, b.h].every(Number.isFinite), shade: d ? [d.style.left, d.style.top] : null }; });
+    ok('마디 상자 위치가 숫자로 계산됨 (경고·반복 구간 상자, 빈 곳 눌러 마디 이동)', shade.box && shade.shade && shade.shade.every((v) => /^-?[\d.]+px$/.test(v)), JSON.stringify(shade));
+    ok('페이지 오류 없음 (악보 계이름)', errs.length === 0, errs.join(' | ')); await p.close();
+  } else console.log('SKIP  악보 계이름 시험 (tests/.cache/osmd-1.8.9.min.js 없음)');
 
   await browser.close();
   console.log(failed ? `\n${failed}개 실패` : '\n모두 통과'); process.exit(failed ? 1 : 0);

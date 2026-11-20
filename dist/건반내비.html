@@ -293,6 +293,16 @@ ol.steps b{color:var(--ink)}
 /* 전체 화면 */
 .app:fullscreen{background:var(--hall)}
 @media (prefers-reduced-motion: reduce){ *{transition:none!important;animation:none!important} }
+
+/* 악보 계이름 (음표 아래) — 손 색을 건반과 맞추되 흰 종이 위에서 읽히게 진하게 */
+#osmd .gn-name{font-family:var(--f-body);font-weight:600;text-anchor:middle;fill:#2c3e50;cursor:pointer}
+#osmd .gn-name.r{fill:#1f6fa3;fill:color-mix(in srgb,var(--rh) 55%,#06121c)}
+#osmd .gn-name.l{fill:#a35f0b;fill:color-mix(in srgb,var(--lh) 62%,#1c1003)}
+#osmd svg{cursor:pointer}
+/* 악보에서 누른 음표 */
+#osmd .gn-ping{fill:rgba(200,160,75,.28);stroke:#c8a04b;stroke-width:3;transform-box:fill-box;transform-origin:center;animation:gnPing 1.2s ease-out 2}
+@keyframes gnPing{from{transform:scale(.8);opacity:1}to{transform:scale(1.7);opacity:.15}}
+@media (prefers-reduced-motion:reduce){#osmd .gn-ping{animation:none}}
 </style>
 
 <div class="app" id="app">
@@ -437,6 +447,7 @@ ol.steps b{color:var(--ink)}
         <select id="scoreLayoutSel" aria-label="악보 보기"><option value="line">한 줄로 흐르게</option><option value="page">여러 줄 (페이지)</option></select></div>
       <div class="row"><span>음 이름</span>
         <select id="labelSel" aria-label="음 이름 표시"><option value="sol">도레미</option><option value="abc">C D E</option><option value="off">끄기</option></select></div>
+      <div class="row"><label for="scoreNames">악보에 계이름<div class="sub">음표 아래에 적어 줘요. 악보의 음표를 누르면 칠 건반을 알려 줘요</div></label><span class="switch"><input type="checkbox" id="scoreNames"></span></div>
       <div class="row"><label for="fingers">손가락 번호 (악보에 있으면)</label><span class="switch"><input type="checkbox" id="fingers" checked></span></div>
       <div class="row"><span>건반 범위</span>
         <select id="rangeSel" aria-label="건반 범위"><option value="fit">곡에 맞춤</option><option value="61">61건반</option><option value="88">88건반</option></select></div>
@@ -531,7 +542,7 @@ const STORE_KEY = "gunban-navi-v1";
 const settings = Object.assign({
   rate: 1, mode: "listen", hands: "both", loopOn: false, loopA: 1, loopB: 4, autoSpeed: false,
   accomp: true, guide: false, countIn: true, inputSound: true, volume: 0.8, metro: false,
-  soundSet: "sal", steadyTempo: false, expandRepeats: true, chordLoose: false, micChord: true, sideCollapsed: false, scoreLayout: "line", fallNotes: false, view: "all", labels: "sol", fingers: true, range: "fit", zoom: 1, scoreZoom: 0.8, kbBase: 60
+  soundSet: "sal", steadyTempo: false, expandRepeats: true, chordLoose: false, micChord: true, sideCollapsed: false, scoreLayout: "line", fallNotes: false, scoreNames: true, view: "all", labels: "sol", fingers: true, range: "fit", zoom: 1, scoreZoom: 0.8, kbBase: 60
 }, (() => { try { return JSON.parse(localStorage.getItem(STORE_KEY) || "{}"); } catch (e) { return {}; } })());
 // 예전 "악보 + 건반(노트 없이)" 보기는 이제 기본 화면(내려오는 음표 끔)과 같다
 if (settings.view === "score") { settings.view = "all"; settings.fallNotes = false; }
@@ -706,7 +717,7 @@ function parseMusicXML(xmlText, opts = {}) {
         if (maxPos <= 1e-6) lenQ = nominal;
         else if (maxPos < nominal - 1e-6 && !(mi === 0 || implicit)) lenQ = nominal;
         else lenQ = maxPos;
-        measures.push({ num: /^\d+$/.test(numAttr || "") ? parseInt(numAttr) : mi + 1, startQ: qStart, lenQ, beats, beatType, ...(rep ? { rep } : {}) });
+        measures.push({ num: /^\d+$/.test(numAttr || "") ? parseInt(numAttr) : mi + 1, id: numAttr || String(mi + 1), startQ: qStart, lenQ, beats, beatType, ...(rep ? { rep } : {}) });
       } else {
         lenQ = measures[mi] ? measures[mi].lenQ : (maxPos || nominal);
       }
@@ -1754,6 +1765,8 @@ const Score = {
           cursorsOptions: [{ type: 0, color: "#17766b", alpha: 0.35, follow: false }]
         });
         this.osmd = osmd;
+        const rawRender = osmd.render.bind(osmd);
+        osmd.render = () => { this.applyRules(osmd); rawRender(); if (this.osmd === osmd) this.decorate(); };
         await osmd.load(variants[vi]);
         if (token !== this.token) return;
         osmd.zoom = settings.scoreZoom;
@@ -1835,9 +1848,12 @@ const Score = {
     try {
       const gs = this.osmd.GraphicSheet; const row = gs.MeasureList[mi]; if (!row) return null;
       const list = row.filter(Boolean); if (!list.length) return null;
-      const u = 10 * this.osmd.zoom;
       const a = list[0].PositionAndShape, z = list[list.length - 1].PositionAndShape;
-      const svg = $("#osmd svg"); const off = svg ? svg.offsetTop : 0; const offL = svg ? svg.offsetLeft : 0;
+      // svg 요소에는 offsetTop이 없다(예전엔 NaN이 되어 마디 상자·마디 이동이 안 됐음) → 화면 위치 차이로 계산
+      const svg = $("#osmd svg"); if (!svg) return null;
+      const sr = svg.getBoundingClientRect(), hr = $("#osmd").getBoundingClientRect(), vb = svg.viewBox && svg.viewBox.baseVal;
+      const u = vb && vb.width ? (sr.width / vb.width) * 10 : 10 * this.osmd.zoom;
+      const off = sr.top - hr.top - (vb ? (vb.y / 10) * u : 0), offL = sr.left - hr.left - (vb ? (vb.x / 10) * u : 0);
       return { x: offL + a.AbsolutePosition.x * u, y: off + (a.AbsolutePosition.y + a.BorderTop) * u, w: a.Size.width * u, h: (z.AbsolutePosition.y + z.BorderBottom - a.AbsolutePosition.y - a.BorderTop) * u };
     } catch (e) { return null; }
   },
@@ -1869,17 +1885,137 @@ const Score = {
         // 넓고 높은 칸에서는 키우고(폭이 좁으면 덜), 한 줄이 다 안 들어가는 낮은 칸(휴대폰 가로)에서는 줄여서 두 단이 모두 보이게
         const maxF = clamp($("#scoreScroll").clientWidth / 520, 1, 1.7);
         const want = !settings.fallNotes && settings.view !== "keys" && pane > 50 ? clamp(ez * (pane * 0.92) / ch, base * 0.6, base * maxF) : base;
-        if (Math.abs(want - ez) / ez > 0.07) { this.rezoom(want); return this.fitHeight(true); }
+        if (Math.abs(want - ez) / ez > 0.07) { this.rezoom(want); return this.fitHeight(again === undefined ? 1 : true); }
+      } else if (again === 1 && this.osmd && ch > 40 && ch > pane + 4 && pane > 50) { // 계이름 글자 크기가 바뀌어 아직 넘치면 한 번 더 줄임
+        const ez = this.osmd.zoom; const want = Math.max(settings.scoreZoom * 0.5, ez * (pane * 0.92) / ch); if (want < ez * 0.97) { this.rezoom(want); return this.fitHeight(true); }
       }
       const room = pane - ch; // 악보 칸이 더 크면(기본 화면) 세로 가운데에
       host.style.marginTop = (-top + Math.max(0, room / 2 - 2)) + "px";
       if (bottom - top > 40) { app.style.setProperty("--score-line-h", Math.ceil(bottom - top + 4) + "px"); setTimeout(() => window.dispatchEvent(new Event("resize")), 30); }
     } catch (e) {}
   },
+  // ---- 악보 계이름 · 음표 터치 ----
+  // 계이름 줄 수(화음은 여러 줄)만큼 오선 사이를 벌린다. 글자는 화면에서 너무 작아지지 않게 확대 비율에 맞춰 키움
+  nameRows(staff) { if (!song) return 1; const by = new Map(); for (const n of song.notes) { if ((n.staff || 1) !== staff) continue; const k = n.startQ.toFixed(3); if (!by.has(k)) by.set(k, new Set()); by.get(k).add(n.midi); } let r = 1; by.forEach((v) => { r = Math.max(r, v.size); }); return Math.min(r, 5); },
+  applyRules(o) {
+    try {
+      const r = o.EngravingRules; if (!o.__base) o.__base = { st: r.MinSkyBottomDistBetweenStaves, sy: r.MinSkyBottomDistBetweenSystems, bs: r.BetweenStaffDistance };
+      const b = o.__base; // 휴대폰 가로처럼 낮은 악보 칸에서는 글자를 작게
+      const lowPane = ($("#scoreScroll").clientHeight || 300) < 170; this.nameFS = Math.max(lowPane ? 1.5 : 1.7, (lowPane ? 9.5 : 13) / (10 * (o.zoom || 1))); this.nameLH = this.nameFS * 1.12;
+      const need = (rows) => 1.9 + (rows - 1) * this.nameLH + 0.9;
+      const on = settings.scoreNames;
+      r.MinSkyBottomDistBetweenStaves = on ? Math.max(b.st, need(this.nameRows(1))) : b.st;
+      r.MinSkyBottomDistBetweenSystems = on ? Math.max(b.sy, need(this.nameRows(2)) + 1) : b.sy;
+      r.BetweenStaffDistance = on ? Math.max(b.bs, need(this.nameRows(1))) : b.bs;
+    } catch (e) {}
+  },
+  decorate() {
+    try { this.collectNotes(); this.drawNames(); } catch (e) { console.warn("names", e); }
+    const pg = this.pinged; if (pg && performance.now() - pg.t0 < PEEK_MS) { const n = (this.gnotes || []).find((g) => g.col === pg.col && g.midi === pg.midi); if (n) this.ping(n, true); }
+  },
+  // 그려진 음표마다: 위치(악보 단위), 음 높이, 손, 손가락 번호
+  collectNotes() {
+    const out = []; this.gnotes = out; if (!this.osmd || !this.osmd.GraphicSheet) return;
+    const sm = song && (song.srcMeasures || song.measures);
+    const look = new Map(); // 원본 마디|마디 안 위치|오선 → 곡 데이터의 음들
+    if (song) for (const n of song.notes) { if (!n.src) continue; const k = `${n.src.measure}|${(+n.src.offsetQ).toFixed(3)}|${n.staff || 1}`; let a = look.get(k); if (!a) look.set(k, (a = [])); if (!a.some((x) => x.midi === n.midi)) a.push(n); }
+    this.osmd.GraphicSheet.MeasureList.forEach((row, mi) => (row || []).forEach((gm, si) => {
+      if (!gm || !gm.ParentStaffLine) return; const sl = gm.ParentStaffLine, top = sl.PositionAndShape.AbsolutePosition.y;
+      const id = sm && sm[mi] ? (sm[mi].id || String(sm[mi].num)) : String(mi + 1);
+      (gm.staffEntries || []).forEach((se, ei) => {
+        const oq = se.relInMeasureTimestamp ? se.relInMeasureTimestamp.RealValue * 4 : 0;
+        for (const gve of se.graphicalVoiceEntries || []) for (const gn of gve.notes || []) {
+          const sn = gn.sourceNote; if (!sn || (sn.isRest && sn.isRest()) || !sn.Pitch) continue;
+          const m0 = sn.halfTone + 12, cand = look.get(`${id}|${oq.toFixed(3)}|${si + 1}`) || [];
+          const best = cand.find((n) => n.midi === m0) || cand.find((n) => Math.abs(n.midi - m0) === 12); // 8va 등으로 한 옥타브 다를 수 있음
+          const tie = sn.NoteTie && sn.NoteTie.StartNote && sn.NoteTie.StartNote !== sn; // 붙임줄로 이어진 뒷음은 다시 치지 않음
+          const ap = gn.PositionAndShape.AbsolutePosition;
+          out.push({ x: ap.x, y: ap.y, mi, si, gm, sl, top, col: `${mi}|${si}|${ei}`, midi: best ? best.midi : m0, hand: best ? best.hand : si === 0 ? "R" : "L", finger: best ? best.finger : null, fund: sn.Pitch.FundamentalNote, acc: sn.Pitch.AccidentalHalfTones, tie: !!tie });
+        }
+      });
+    }));
+  },
+  // 악보에 쓰인 대로의 이름 (레♭과 도♯을 구분)
+  spell(n) {
+    const mode = settings.labels === "abc" ? "abc" : "sol"; const i = { 0: 0, 2: 1, 4: 2, 5: 3, 7: 4, 9: 5, 11: 6 }[n.fund];
+    if (i == null) return noteName(n.midi, mode);
+    const a = Math.round(n.acc || 0), acc = a > 0 ? "♯".repeat(a) : a < 0 ? "♭".repeat(-a) : "";
+    return (mode === "abc" ? "CDEFGAB"[i] : ["도", "레", "미", "파", "솔", "라", "시"][i]) + acc;
+  },
+  drawNames() {
+    const svg = $("#osmd svg"); if (!svg) return;
+    svg.querySelectorAll(".gn-names").forEach((x) => x.remove());
+    (this.gnotes || []).forEach((n) => { n.ly = null; });
+    if (!settings.scoreNames || !this.gnotes || !this.gnotes.length) return;
+    const NS = "http://www.w3.org/2000/svg", grp = document.createElementNS(NS, "g"); grp.setAttribute("class", "gn-names");
+    const FS = this.nameFS || 1.45, LH = this.nameLH || 1.6; let maxY = 0;
+    const byGM = new Map(); for (const n of this.gnotes) { let a = byGM.get(n.gm); if (!a) byGM.set(n.gm, (a = [])); a.push(n); }
+    byGM.forEach((list, gm) => {
+      // 마디마다 오선 아래 가장 낮은 것(덧줄 음표·손가락 번호·꼬리)보다 아래에 한 줄로
+      const sl = list[0].sl, top = list[0].top, ps = gm.PositionAndShape, x0 = ps.AbsolutePosition.x - sl.PositionAndShape.AbsolutePosition.x;
+      let bot = top + 4; try { const v = sl.SkyBottomLineCalculator.getBottomLineMaxInRange(x0, x0 + ps.Size.width); if (isFinite(v)) bot = Math.max(bot, top + v); } catch (e) {}
+      for (const n of list) bot = Math.max(bot, n.y + 0.6);
+      const base = bot + 1.9;
+      const cols = new Map(); for (const n of list) { let a = cols.get(n.col); if (!a) cols.set(n.col, (a = [])); a.push(n); }
+      cols.forEach((ns) => {
+        const play = ns.filter((n) => !n.tie).sort((a, b) => b.midi - a.midi); if (!play.length) return;
+        const uniq = []; for (const n of play) if (!uniq.some((u) => u.midi === n.midi)) uniq.push(n);
+        const xs = uniq.map((n) => n.x).sort((a, b) => a - b), cx = xs[0] + (xs[xs.length - 1] - xs[0]) / 2; // 붙은 음(2도)은 머리가 옆으로 비켜 있음
+        uniq.forEach((n, i) => {
+          const y = base + i * LH; const t = document.createElementNS(NS, "text");
+          t.setAttribute("x", (cx * 10).toFixed(1)); t.setAttribute("y", (y * 10).toFixed(1)); t.setAttribute("font-size", (FS * 10).toFixed(1));
+          t.setAttribute("class", "gn-name " + (n.hand === "L" ? "l" : "r")); t.textContent = this.spell(n); grp.appendChild(t);
+          for (const m of play) if (m.midi === n.midi) { m.ly = y; m.lx = cx; }
+          maxY = Math.max(maxY, y + 0.45);
+        });
+      });
+    });
+    svg.appendChild(grp);
+    // 맨 아래 계이름이 그림 밖으로 잘리지 않게 그림 높이를 늘림
+    const vb = svg.viewBox && svg.viewBox.baseVal;
+    if (vb && vb.height && maxY * 10 + 4 > vb.y + vb.height) {
+      const k = svg.getBoundingClientRect().height / vb.height || 1, nh = maxY * 10 + 6 - vb.y;
+      svg.setAttribute("viewBox", `${vb.x} ${vb.y} ${vb.width} ${nh}`); svg.setAttribute("height", String(nh * k)); if (svg.style.height) svg.style.height = nh * k + "px";
+    }
+  },
+  // 화면 좌표 → 가장 가까운 음표 (음표 머리나 그 아래 계이름을 누르면)
+  noteAt(cx, cy) {
+    if (!this.ready || !this.gnotes || !this.gnotes.length) return null;
+    const svg = $("#osmd svg"); if (!svg) return null; const r = svg.getBoundingClientRect(), vb = svg.viewBox.baseVal; if (!vb || !vb.width) return null;
+    const ppu = (r.width / vb.width) * 10, ux = vb.x / 10 + (cx - r.left) / ppu, uy = vb.y / 10 + (cy - r.top) / ppu;
+    const rad = Math.max(1.6, 22 / ppu); let best = null, bd = Infinity;
+    for (const n of this.gnotes) {
+      let d = Math.hypot((n.x - ux) * 1.15, n.y - uy);
+      if (n.ly != null) d = Math.min(d, Math.hypot((n.lx - ux) * 1.15, n.ly - 0.5 - uy));
+      if (d < bd || (d === bd && best && best.tie && !n.tie)) { bd = d; best = n; }
+    }
+    return bd <= rad ? best : null;
+  },
+  ping(n, again) {
+    if (!again) this.pinged = { col: n.col, midi: n.midi, t0: performance.now() };
+    const svg = $("#osmd svg"); if (!svg) return; svg.querySelectorAll(".gn-ping").forEach((x) => x.remove());
+    const c = document.createElementNS("http://www.w3.org/2000/svg", "circle"); c.setAttribute("class", "gn-ping " + (n.hand === "L" ? "l" : "r"));
+    c.setAttribute("cx", (n.x * 10).toFixed(1)); c.setAttribute("cy", (n.y * 10).toFixed(1)); c.setAttribute("r", "11"); svg.appendChild(c);
+    setTimeout(() => c.remove(), Math.max(0, PEEK_MS - (performance.now() - this.pinged.t0)));
+  },
+  rerender() { if (!this.ready || !this.osmd) return; try { this.osmd.render(); this.fitHeight(); this.idx = -1; this.sync(true); this.drawShades(); } catch (e) { console.warn(e); } },
   rezoom(z) { try { this.osmd.zoom = z; this.osmd.render(); if (this.ready) { this.idx = -1; this.sync(true); this.drawShades(); } } catch (e) {} },
   setZoom(z) { if (!this.ready) return; try { this.osmd.zoom = z; this.osmd.render(); this.fitHeight(); this.idx = -1; this.sync(true); this.drawShades(); } catch (e) {} }
 };
+// 악보에서 누른 음표를 건반에 잠깐 표시
+const PEEK_MS = 2600; let peek = null;
+const peekNow = () => (peek && performance.now() - peek.t0 < PEEK_MS ? peek : null);
+function showPeek(n) {
+  const name = Score.spell(n);
+  peek = { midi: n.midi, hand: n.hand, finger: n.finger, name, t0: performance.now() };
+  Score.ping(n);
+  if (!Mic.on) { try { Sound.ensure(); Sound.note(n.midi, 0.55, 0.7); } catch (e) {} } // 마이크를 켰으면 앱 소리를 피아노 소리로 착각하지 않게 소리는 내지 않음
+  const fin = settings.fingers && n.finger ? ` ${n.finger}번 손가락` : "";
+  toast(`${name}${n.tie ? " (붙임줄 — 앞 음을 계속 누르고 있어요)" : ""} · ${n.hand === "L" ? "왼손" : "오른손"}${fin} — 건반에 표시했어요`);
+}
 $("#osmd").addEventListener("click", (e) => {
+  const hit = Score.noteAt(e.clientX, e.clientY);
+  if (hit) { showPeek(hit); return; }
   const host = $("#osmd").getBoundingClientRect();
   const mi = Score.measureFromPoint(e.clientX - host.left, e.clientY - host.top);
   if (mi >= 0) { seek(song.measures[nearestPerfOfSrc(mi)].start); toast(`${mi + 1}마디로 이동했어요`); }
@@ -1983,8 +2119,11 @@ function drawFall() {
   if (fall.offsetParent === null) return;
   const { w: W, h: H } = sizeCanvas(fall, fctx);
   fctx.fillStyle = colors["--stage"]; fctx.fillRect(0, 0, W, H);
-  if (!settings.fallNotes) { drawGuide(W, H); return; }
+  if (!settings.fallNotes) { drawGuide(W, H); drawPeek(W, H); return; }
   if (!song) return;
+  try { drawFallNotes(W, H); } finally { drawPeek(W, H); }
+}
+function drawFallNotes(W, H) {
   const pps = settings.zoom * Math.max(90, H / 3.2);
   const hitY = H - 1;
   const top = E.pos + hitY / pps, bottom = E.pos - 0.2;
@@ -2076,7 +2215,29 @@ function drawKeys() {
     if (u && settings.labels !== "off" && g.w > 9) { kctx.fillStyle = fillB ? "#0b0f17" : "#fff"; kctx.textAlign = "center"; kctx.font = `600 ${Math.min(11, g.w * 0.5)}px ${fam}`; kctx.fillText(noteName(m, settings.labels), g.x + g.w / 2, blackH - 8); }
     if (u && settings.fingers && u.finger && !solid) badge(kctx, g.x + g.w / 2, blackH + 14, String(u.finger), handColor(u.hand), fam);
   }
+  const pk = peekNow();
+  if (pk && pk.midi >= kb.lo && pk.midi <= kb.hi) {
+    const g = keyGeom(pk.midi, W), kh = isBlack(pk.midi) ? blackH : whiteH, t = (now - pk.t0) / 1000, pulse = 0.5 + 0.5 * Math.sin(t * 8);
+    kctx.save(); kctx.fillStyle = `rgba(200,160,75,${(isBlack(pk.midi) ? 0.62 : 0.28) + 0.2 * pulse})`; keyShape(kctx, g.x + 1, 0, g.w - 2, kh, Math.min(6, g.w / 4)); kctx.fill();
+    kctx.strokeStyle = "#c8a04b"; kctx.lineWidth = 3 + 2 * pulse; kctx.shadowColor = "rgba(230,195,106,.9)"; kctx.shadowBlur = 14 * pulse;
+    keyShape(kctx, g.x + 2.5, 1, g.w - 5, kh - 3.5, Math.min(6, g.w / 4)); kctx.stroke(); kctx.restore();
+  }
   kctx.textAlign = "left"; kctx.restore();
+}
+// 악보에서 누른 음표: 건반 바로 위에 이름표
+function drawPeek(W, H) {
+  const pk = peekNow(); if (!pk || pk.midi < kb.lo || pk.midi > kb.hi || H < 24) return;
+  const g = keyGeom(pk.midi, W), cx = g.x + g.w / 2, kw = W / kb.whites.length, t = (performance.now() - pk.t0) / 1000;
+  const fade = Math.min(1, (PEEK_MS / 1000 - t) / 0.4), fam = colors["--f-body"];
+  const ph = clamp(H - 16, 22, 54), pw = clamp(kw * 1.25, 46, 84), x = clamp(cx - pw / 2, 2, W - pw - 2), y = H - 9 - ph;
+  fctx.save(); fctx.globalAlpha = Math.max(0, fade);
+  fctx.fillStyle = "#c8a04b"; fctx.shadowColor = "rgba(0,0,0,.45)"; fctx.shadowBlur = 10; roundRect(fctx, x, y, pw, ph, Math.min(12, ph / 3)); fctx.fill(); fctx.shadowBlur = 0;
+  fctx.beginPath(); fctx.moveTo(cx - 7, H - 10); fctx.lineTo(cx + 7, H - 10); fctx.lineTo(cx, H); fctx.closePath(); fctx.fill();
+  fctx.fillStyle = "#17130a"; fctx.textAlign = "center"; fctx.textBaseline = "middle";
+  const sub = (pk.hand === "L" ? "왼손" : "오른손") + (settings.fingers && pk.finger ? " " + pk.finger : "");
+  if (ph >= 40) { fctx.font = `700 ${Math.round(ph * 0.4)}px ${fam}`; fctx.fillText(pk.name, cx > x + pw ? x + pw / 2 : clamp(cx, x + pw / 2, x + pw / 2), y + ph * 0.38); fctx.font = `600 ${Math.round(ph * 0.22)}px ${fam}`; fctx.fillText(sub, x + pw / 2, y + ph * 0.76); }
+  else { fctx.font = `700 ${Math.round(ph * 0.5)}px ${fam}`; fctx.fillText(pk.name, x + pw / 2, y + ph / 2 + 1); }
+  fctx.textAlign = "left"; fctx.textBaseline = "alphabetic"; fctx.restore();
 }
 // 건반 모양: 위는 펠트 밑으로 들어가 각지고, 아래만 둥글게
 function keyShape(ctx, x, y, w, h, r) { ctx.beginPath(); if (!(w > 0 && h > 0)) return; r = Math.max(0, Math.min(r, w / 2, h / 2)); ctx.moveTo(x, y); ctx.lineTo(x + w, y); ctx.lineTo(x + w, y + h - r); ctx.arcTo(x + w, y + h, x + w - r, y + h, r); ctx.lineTo(x + r, y + h); ctx.arcTo(x, y + h, x, y + h - r, r); ctx.closePath(); }
@@ -2218,7 +2379,8 @@ $("#fsBtn").onclick = toggleFullscreen;
 ["fullscreenchange", "webkitfullscreenchange"].forEach((ev) => document.addEventListener(ev, () => { $("#fsBtn").setAttribute("aria-pressed", String(fsOn())); setTimeout(() => window.dispatchEvent(new Event("resize")), 60); }));
 bindSwitch("fallNotes", "fallNotes", () => { applyView(); toast(settings.fallNotes ? "음표가 건반 위로 미리 내려와요" : "지금 칠 건반만 알려 줘요"); });
 $("#viewSel").value = settings.view; $("#viewSel").onchange = (e) => { settings.view = e.target.value; applyView(); saveSettings(); };
-$("#labelSel").value = settings.labels; $("#labelSel").onchange = (e) => { settings.labels = e.target.value; saveSettings(); };
+$("#labelSel").value = settings.labels; $("#labelSel").onchange = (e) => { settings.labels = e.target.value; saveSettings(); Score.decorate(); };
+bindSwitch("scoreNames", "scoreNames", () => { Score.rerender(); toast(settings.scoreNames ? "악보 음표 아래에 계이름을 적었어요" : "악보의 계이름을 지웠어요"); });
 $("#rangeSel").value = settings.range; $("#rangeSel").onchange = (e) => { settings.range = e.target.value; computeRange(); saveSettings(); };
 $("#zoom").value = Math.round(settings.zoom * 100); $("#zoom").oninput = (e) => { settings.zoom = e.target.value / 100; saveSettings(); };
 $("#scoreZoom").value = Math.round(settings.scoreZoom * 100); $("#scoreZoom").onchange = (e) => { settings.scoreZoom = e.target.value / 100; Score.setZoom(settings.scoreZoom); saveSettings(); };
@@ -3180,7 +3342,7 @@ function boot() {
   if (matchMedia("(pointer: coarse)").matches) $("#hintKeys").hidden = true;
   requestAnimationFrame(frame);
 }
-window.GunbanNavi = { parseMusicXML, parseMIDI, jsonToMusicXML, buildSong, mxlToXml, get song() { return song; }, E, settings, ODE, seek, play, pause, userNoteOn, setMode, setHands, setLoopRange, setRate, Score, PosLog, loopRange, repeatOrder, Input, Mic, createMicAnalyzer, guideTargets };
+window.GunbanNavi = { parseMusicXML, parseMIDI, jsonToMusicXML, buildSong, mxlToXml, get song() { return song; }, E, settings, ODE, seek, play, pause, userNoteOn, setMode, setHands, setLoopRange, setRate, Score, PosLog, loopRange, repeatOrder, Input, Mic, createMicAnalyzer, guideTargets, peekNow, showPeek };
 window.loopRangeForTest = () => loopRange();
 boot();
 </script>
