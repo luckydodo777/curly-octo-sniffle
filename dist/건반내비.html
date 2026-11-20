@@ -1891,7 +1891,8 @@ const Score = {
       }
       const room = pane - ch; // 악보 칸이 더 크면(기본 화면) 세로 가운데에
       host.style.marginTop = (-top + Math.max(0, room / 2 - 2)) + "px";
-      if (bottom - top > 40) { app.style.setProperty("--score-line-h", Math.ceil(bottom - top + 4) + "px"); setTimeout(() => window.dispatchEvent(new Event("resize")), 30); }
+      // 높이가 실제로 바뀔 때만 알림 (같은 값으로 resize를 보내면 OSMD가 악보를 또 다시 그려 깜박이고 느려짐)
+      if (bottom - top > 40) { const v = Math.ceil(bottom - top + 4) + "px"; if (app.style.getPropertyValue("--score-line-h") !== v) { app.style.setProperty("--score-line-h", v); setTimeout(() => window.dispatchEvent(new Event("resize")), 30); } }
     } catch (e) {}
   },
   // ---- 악보 계이름 · 음표 터치 ----
@@ -2226,7 +2227,10 @@ function drawKeys() {
 }
 // 악보에서 누른 음표: 건반 바로 위에 이름표
 function drawPeek(W, H) {
-  const pk = peekNow(); if (!pk || pk.midi < kb.lo || pk.midi > kb.hi || H < 24) return;
+  const pk = peekNow(); if (!pk) return;
+  // 악보가 다시 그려져 동그라미가 사라졌으면 다시 붙인다
+  const pg = Score.pinged; if (pg && performance.now() - pg.t0 < PEEK_MS - 100 && Score.ready && !document.querySelector("#osmd .gn-ping")) { const n = (Score.gnotes || []).find((g) => g.col === pg.col && g.midi === pg.midi); if (n) Score.ping(n, true); }
+  if (pk.midi < kb.lo || pk.midi > kb.hi || H < 24) return;
   const g = keyGeom(pk.midi, W), cx = g.x + g.w / 2, kw = W / kb.whites.length, t = (performance.now() - pk.t0) / 1000;
   const fade = Math.min(1, (PEEK_MS / 1000 - t) / 0.4), fam = colors["--f-body"];
   const ph = clamp(H - 16, 22, 54), pw = clamp(kw * 1.25, 46, 84), x = clamp(cx - pw / 2, 2, W - pw - 2), y = H - 9 - ph;
