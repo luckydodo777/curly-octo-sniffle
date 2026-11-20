@@ -282,3 +282,13 @@ ol.steps b{color:var(--ink)}
 /* 전체 화면 */
 .app:fullscreen{background:var(--hall)}
 @media (prefers-reduced-motion: reduce){ *{transition:none!important;animation:none!important} }
+
+/* 악보 계이름 (음표 아래) — 손 색을 건반과 맞추되 흰 종이 위에서 읽히게 진하게 */
+#osmd .gn-name{font-family:var(--f-body);font-weight:600;text-anchor:middle;fill:#2c3e50;cursor:pointer}
+#osmd .gn-name.r{fill:#1f6fa3;fill:color-mix(in srgb,var(--rh) 55%,#06121c)}
+#osmd .gn-name.l{fill:#a35f0b;fill:color-mix(in srgb,var(--lh) 62%,#1c1003)}
+#osmd svg{cursor:pointer}
+/* 악보에서 누른 음표 */
+#osmd .gn-ping{fill:rgba(200,160,75,.28);stroke:#c8a04b;stroke-width:3;transform-box:fill-box;transform-origin:center;animation:gnPing 1.2s ease-out 2}
+@keyframes gnPing{from{transform:scale(.8);opacity:1}to{transform:scale(1.7);opacity:.15}}
+@media (prefers-reduced-motion:reduce){#osmd .gn-ping{animation:none}}
